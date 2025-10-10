@@ -2,8 +2,18 @@
 
 use super::{
     StorageApi,
-    api::{OnrampContactInfo, OnrampVerificationStatus, Result},
+    api::{BundleHistoryEntry, OnrampContactInfo, OnrampVerificationStatus, Result},
 };
+
+/// Whether to store full transaction data in the txs.tx column
+#[derive(Debug, Clone, Copy)]
+enum StoreTxData {
+    /// Store full transaction data (for single-chain bundles)
+    Yes,
+    /// Don't store transaction data to avoid duplication (for interop bundles where data is in
+    /// bundle_data)
+    No,
+}
 use crate::{
     error::StorageError,
     liquidity::{
@@ -12,20 +22,22 @@ use crate::{
     },
     storage::api::LockLiquidityInput,
     transactions::{
-        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, RelayTransactionKind,
+        TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
-    primitives::{Address, B256, BlockNumber, ChainId, U256, map::HashMap},
+    hex,
+    primitives::{Address, B256, BlockNumber, ChainId, TxHash, U256, map::HashMap},
     rpc::types::TransactionReceipt,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::eyre;
-use sqlx::{PgPool, Postgres, types::BigDecimal};
+use sqlx::{PgPool, Postgres, Row, types::BigDecimal};
 use tracing::{error, instrument};
 
 /// PostgreSQL storage implementation.
@@ -44,13 +56,20 @@ impl PgStorage {
     async fn queue_transaction_with(
         &self,
         relay_tx: &RelayTransaction,
+        store_tx_data: StoreTxData,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
     ) -> Result<()> {
         // Insert transaction into txs table
+        let tx_value = match store_tx_data {
+            StoreTxData::Yes => Some(serde_json::to_value(relay_tx)?),
+            StoreTxData::No => None,
+        };
+
         sqlx::query!(
-            "insert into txs (tx_id, chain_id) values ($1, $2)",
+            "insert into txs (tx_id, chain_id, tx) values ($1, $2, $3)",
             relay_tx.id.as_slice(),
-            relay_tx.chain_id() as i64 // yikes..
+            relay_tx.chain_id() as i64, // yikes..
+            tx_value
         )
         .execute(&mut **tx)
         .await
@@ -334,6 +353,32 @@ enum TxStatus {
     Failed,
 }
 
+/// Helper macro to parse transaction status from database row.
+macro_rules! parse_transaction_status {
+    ($row:expr) => {{
+        let tx_hash = $row.tx_hash.as_ref().map(|hash| B256::from_slice(hash));
+        (|| -> Result<_> {
+            Ok((
+                $row.chain_id as u64,
+                match $row.status {
+                    TxStatus::InFlight => TransactionStatus::InFlight,
+                    // SAFETY: it should never be possible to have a pending transaction without a
+                    // hash in the database
+                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
+                    // SAFETY: it should never be possible to have a confirmed transaction without a
+                    // receipt in the database
+                    TxStatus::Confirmed => TransactionStatus::Confirmed(
+                        serde_json::from_value($row.receipt.unwrap()).map_err(eyre::Error::from)?,
+                    ),
+                    TxStatus::Failed => TransactionStatus::failed(
+                        $row.error.unwrap_or_else(|| "transaction failed".to_string()),
+                    ),
+                },
+            ))
+        })()
+    }};
+}
+
 /// This is a wrapper around [`TransferState`] since `sqlx` does not support enums with
 /// associated data.
 #[derive(Debug, sqlx::Type)]
@@ -552,28 +597,38 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        row.map(|row| {
-            let tx_hash = row.tx_hash.as_ref().map(|hash| B256::from_slice(hash));
+        row.map(|row| parse_transaction_status!(row)).transpose()
+    }
 
-            Ok((
-                row.chain_id as u64,
-                match row.status {
-                    TxStatus::InFlight => TransactionStatus::InFlight,
-                    // SAFETY: it should never be possible to have a pending transaction without a
-                    // hash in the database
-                    TxStatus::Pending => TransactionStatus::Pending(tx_hash.unwrap()),
-                    // SAFETY: it should never be possible to have a confirmed transaction without a
-                    // receipt in the database
-                    TxStatus::Confirmed => TransactionStatus::Confirmed(
-                        serde_json::from_value(row.receipt.unwrap()).map_err(eyre::Error::from)?,
-                    ),
-                    TxStatus::Failed => TransactionStatus::failed(
-                        row.error.unwrap_or_else(|| "transaction failed".to_string()),
-                    ),
-                },
-            ))
-        })
-        .transpose()
+    #[instrument(skip(self))]
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        if tx_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tx_id_bytes: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
+
+        let rows = sqlx::query!(
+            r#"select tx_id, chain_id, tx_hash, status as "status: TxStatus", error, receipt
+               from txs
+               where tx_id = ANY($1)
+               order by array_position($1, tx_id)"#,
+            &tx_id_bytes
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut map: HashMap<TxId, (ChainId, TransactionStatus)> = HashMap::default();
+        for row in rows {
+            map.insert(TxId::from_slice(&row.tx_id), parse_transaction_status!(row)?);
+        }
+
+        // Return results in the same order as input
+        Ok(tx_ids.iter().map(|tx_id| map.get(tx_id).cloned()).collect())
     }
 
     #[instrument(skip(self))]
@@ -606,7 +661,7 @@ impl StorageApi for PgStorage {
     #[instrument(skip(self))]
     async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
         let mut db_tx = self.pool.begin().await.map_err(eyre::Error::from)?;
-        self.queue_transaction_with(tx, &mut db_tx).await?;
+        self.queue_transaction_with(tx, StoreTxData::Yes, &mut db_tx).await?;
         db_tx.commit().await.map_err(eyre::Error::from)?;
         Ok(())
     }
@@ -927,8 +982,9 @@ impl StorageApi for PgStorage {
         self.store_pending_bundle_with(bundle, status, &mut tx).await?;
 
         // Then queue the specific transactions provided
+        // Don't store tx data since it's already in bundle_data (avoid duplication)
         for relay_tx in transactions {
-            self.queue_transaction_with(relay_tx, &mut tx).await?;
+            self.queue_transaction_with(relay_tx, StoreTxData::No, &mut tx).await?;
         }
 
         tx.commit().await.map_err(eyre::Error::from)?;
@@ -1528,5 +1584,189 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         Ok(())
+    }
+
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> Result<Vec<BundleHistoryEntry>> {
+        let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
+        let order = if sort_desc { "DESC" } else { "ASC" };
+        let per_branch_limit = limit + offset;
+
+        // Note: Using format!() here because ORDER BY direction and LIMIT are runtime parameters.
+        let query = format!(
+            r#"
+            WITH all_bundles AS (
+                (
+                    SELECT
+                        bundle_id,
+                        status,
+                        bundle_data,
+                        COALESCE(finished_at, created_at) as timestamp,
+                        'multichain' as bundle_type,
+                        NULL::bigint as chain_id,
+                        NULL::bytea as tx_hash
+                    FROM (
+                        (
+                            SELECT bundle_id, status, bundle_data, created_at, NULL::timestamptz as finished_at
+                            FROM pending_bundles
+                            WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                            ORDER BY created_at {}
+                            LIMIT {}
+                        )
+                        UNION ALL
+                        (
+                            SELECT bundle_id, status, bundle_data, created_at, finished_at
+                            FROM finished_bundles
+                            WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                            ORDER BY finished_at {}
+                            LIMIT {}
+                        )
+                    ) mc
+                    ORDER BY COALESCE(finished_at, created_at) {}
+                    LIMIT {}
+                )
+                UNION ALL
+                (
+                    SELECT
+                        bt.bundle_id,
+                        NULL as status,
+                        t.tx as bundle_data,
+                        tx_received_at_immutable(t.tx) as timestamp,
+                        'singlechain' as bundle_type,
+                        t.chain_id,
+                        t.tx_hash
+                    FROM bundle_transactions bt
+                    JOIN txs t ON bt.tx_id = t.tx_id
+                    WHERE t.tx IS NOT NULL
+                    AND t.tx->'quote'->'intent'->>'eoa' = $1
+                    AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
+                    AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
+                    ORDER BY tx_received_at_immutable(t.tx) {}
+                    LIMIT {}
+                )
+            )
+            SELECT * FROM all_bundles
+            ORDER BY timestamp {}
+            LIMIT $2 OFFSET $3
+            "#,
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order,
+            per_branch_limit,
+            order
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(&eoa_hex)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            let bundle_type: String = row.get("bundle_type");
+            let timestamp: chrono::DateTime<chrono::Utc> = row.get("timestamp");
+            let timestamp = timestamp.timestamp() as u64;
+
+            match bundle_type.as_str() {
+                "multichain" => {
+                    let bundle_data: serde_json::Value = row.get("bundle_data");
+                    let bundle: InteropBundle = serde_json::from_value(bundle_data)
+                        .map_err(|e| eyre::eyre!("Failed to deserialize InteropBundle: {}", e))?;
+                    let status: BundleStatus = row
+                        .try_get("status")
+                        .map_err(|e| eyre::eyre!("Failed to get BundleStatus: {}", e))?;
+
+                    entries.push(BundleHistoryEntry::Interop {
+                        bundle: Box::new(BundleWithStatus { bundle, status }),
+                        timestamp,
+                    });
+                }
+                "singlechain" => {
+                    let bundle_id_bytes: Vec<u8> = row.get("bundle_id");
+                    let bundle_id = BundleId::from_slice(&bundle_id_bytes);
+                    let chain_id: i64 = row.get("chain_id");
+                    let tx_hash: Option<TxHash> =
+                        row.try_get::<Vec<u8>, _>("tx_hash").ok().map(|v| TxHash::from_slice(&v));
+
+                    // bundle_data might be NULL for old transactions (backwards compatibility)
+                    let tx_data: Option<serde_json::Value> = row.try_get("bundle_data").ok();
+
+                    let quote = if let Some(tx_data) = tx_data {
+                        let relay_tx: RelayTransaction =
+                            serde_json::from_value(tx_data).map_err(|e| {
+                                eyre::eyre!("Failed to deserialize RelayTransaction: {}", e)
+                            })?;
+
+                        match relay_tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => Some((*quote).clone()),
+                            _ => continue, // Skip non-intent transactions
+                        }
+                    } else {
+                        // Old transaction without stored data - still show in history but without
+                        // quote
+                        None
+                    };
+
+                    entries.push(BundleHistoryEntry::SingleChain {
+                        bundle_id,
+                        chain_id: chain_id as u64,
+                        quote: quote.map(Box::new),
+                        tx_hash,
+                        timestamp,
+                    });
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(entries)
+    }
+
+    async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64> {
+        let eoa_hex = format!("0x{}", hex::encode(address.as_slice()));
+
+        let query = r#"
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM pending_bundles
+                    WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                ) +
+                (
+                    SELECT COUNT(*)
+                    FROM finished_bundles
+                    WHERE bundle_data->'dst_txs'->0->'quote'->'intent'->>'eoa' = $1
+                ) +
+                (
+                    SELECT COUNT(*)
+                    FROM bundle_transactions bt
+                    JOIN txs t ON bt.tx_id = t.tx_id
+                    WHERE t.tx IS NOT NULL
+                    AND t.tx->'quote'->'intent'->>'eoa' = $1
+                    AND NOT EXISTS (SELECT 1 FROM pending_bundles WHERE bundle_id = bt.bundle_id)
+                    AND NOT EXISTS (SELECT 1 FROM finished_bundles WHERE bundle_id = bt.bundle_id)
+                ) as total
+        "#;
+
+        let row = sqlx::query(query)
+            .bind(&eoa_hex)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+        let total: i64 = row.get("total");
+        Ok(total as u64)
     }
 }

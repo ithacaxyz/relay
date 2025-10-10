@@ -91,6 +91,25 @@ sol! {
     }
 }
 
+impl Signature {
+    /// Extracts key hash from packed signature bytes.
+    /// Returns None if signature is too short to contain the packed suffix.
+    ///
+    /// Packed format: `abi.encodePacked(bytes innerSignature, bytes32 keyHash, bool prehash)`
+    /// where the last 33 bytes are: keyHash (32 bytes) + prehash flag (1 byte)
+    ///
+    /// The inner signature can be any length (EOA 65 bytes, P256, WebAuthn, etc.).
+    pub fn decode_key_hash(sig_bytes: &[u8]) -> Option<B256> {
+        // Need at least 33 bytes for keyHash (32) + prehash flag (1)
+        if sig_bytes.len() < 33 {
+            return None;
+        }
+
+        let key_hash_start = sig_bytes.len() - 33;
+        Some(B256::from_slice(&sig_bytes[key_hash_start..key_hash_start + 32]))
+    }
+}
+
 impl getKeysReturn {
     /// Converts [`getKeysReturn`] into a list of tuples: `Vec<(B256, Key)>`
     pub fn into_tuples(self) -> impl Iterator<Item = (B256, Key)> {

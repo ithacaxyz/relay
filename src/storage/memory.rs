@@ -2,7 +2,7 @@
 
 use super::{
     StorageApi,
-    api::{OnrampContactInfo, OnrampVerificationStatus, Result},
+    api::{BundleHistoryEntry, OnrampContactInfo, OnrampVerificationStatus, Result},
 };
 use crate::{
     error::StorageError,
@@ -12,7 +12,8 @@ use crate::{
     },
     storage::api::LockLiquidityInput,
     transactions::{
-        PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
+        PendingTransaction, PullGasState, RelayTransaction, RelayTransactionKind,
+        TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{CreatableAccount, SignedCall, rpc::BundleId},
@@ -25,7 +26,7 @@ use alloy::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::SystemTime};
 use tokio::sync::RwLock;
 
 /// Key for phone verification storage
@@ -56,6 +57,30 @@ struct VerifiedPhone {
     verified_at: DateTime<Utc>,
 }
 
+/// Bundle with status and timestamp
+#[derive(Debug, Clone)]
+struct BundleWithStatusAndTime {
+    bundle_with_status: BundleWithStatus,
+    created_at: u64,
+}
+
+impl BundleWithStatusAndTime {
+    /// Returns a reference to the bundle.
+    fn bundle(&self) -> &InteropBundle {
+        &self.bundle_with_status.bundle
+    }
+
+    /// Returns the bundle status.
+    fn status(&self) -> BundleStatus {
+        self.bundle_with_status.status
+    }
+
+    /// Consumes self and returns the inner BundleWithStatus.
+    fn into_bundle_with_status(self) -> BundleWithStatus {
+        self.bundle_with_status
+    }
+}
+
 /// [`StorageApi`] implementation in-memory. Used for testing
 #[derive(Debug, Default)]
 pub struct InMemoryStorage {
@@ -64,18 +89,33 @@ pub struct InMemoryStorage {
     statuses: DashMap<TxId, (ChainId, TransactionStatus)>,
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
+    transactions_by_address: DashMap<Address, Vec<RelayTransaction>>,
     unverified_emails: DashMap<(Address, String), String>,
     verified_emails: DashMap<String, VerifiedEmail>,
     unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
     verified_phones: DashMap<String, VerifiedPhone>,
-    pending_bundles: DashMap<BundleId, BundleWithStatus>,
-    finished_bundles: DashMap<BundleId, BundleWithStatus>,
+    pending_bundles: DashMap<BundleId, BundleWithStatusAndTime>,
+    finished_bundles: DashMap<BundleId, BundleWithStatusAndTime>,
     pending_refunds: DashMap<BundleId, DateTime<Utc>>,
     liquidity: RwLock<LiquidityTrackerInner>,
     transfers:
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
     pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
     precalls: DashMap<(Address, ChainId, U256), SignedCall>,
+}
+
+impl InMemoryStorage {
+    /// Helper to find a transaction by ID in queued or pending transactions
+    fn find_transaction(&self, tx_id: TxId) -> Option<RelayTransaction> {
+        // Check queued transactions
+        for queue_entry in self.queued_transactions.iter() {
+            if let Some(tx) = queue_entry.value().iter().find(|t| t.id == tx_id) {
+                return Some(tx.clone());
+            }
+        }
+        // Check pending transactions
+        self.pending_transactions.get(&tx_id).map(|pending_tx| pending_tx.tx.clone())
+    }
 }
 
 #[async_trait]
@@ -145,6 +185,13 @@ impl StorageApi for InMemoryStorage {
         Ok(self.statuses.get(&tx).as_deref().cloned())
     }
 
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        Ok(tx_ids.iter().map(|tx_id| self.statuses.get(tx_id).as_deref().cloned()).collect())
+    }
+
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> Result<()> {
         self.bundles.entry(bundle).or_default().push(tx);
         Ok(())
@@ -157,6 +204,12 @@ impl StorageApi for InMemoryStorage {
     async fn queue_transaction(&self, tx: &RelayTransaction) -> Result<()> {
         self.statuses.insert(tx.id, (tx.chain_id(), TransactionStatus::InFlight));
         self.queued_transactions.entry(tx.chain_id()).or_default().push(tx.clone());
+
+        // Store transaction by address for history lookup
+        if let Some(eoa) = tx.eoa() {
+            self.transactions_by_address.entry(*eoa).or_default().push(tx.clone());
+        }
+
         Ok(())
     }
 
@@ -298,7 +351,14 @@ impl StorageApi for InMemoryStorage {
         bundle: &InteropBundle,
         status: BundleStatus,
     ) -> Result<()> {
-        self.pending_bundles.insert(bundle.id, BundleWithStatus { bundle: bundle.clone(), status });
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        self.pending_bundles.insert(
+            bundle.id,
+            BundleWithStatusAndTime {
+                bundle_with_status: BundleWithStatus { bundle: bundle.clone(), status },
+                created_at: now,
+            },
+        );
         Ok(())
     }
 
@@ -308,18 +368,25 @@ impl StorageApi for InMemoryStorage {
         status: BundleStatus,
     ) -> Result<()> {
         if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
-            entry.status = status;
+            entry.bundle_with_status.status = status;
         }
         Ok(())
     }
 
     async fn get_pending_bundles(&self) -> Result<Vec<BundleWithStatus>> {
         // Return all bundles
-        Ok(self.pending_bundles.iter().map(|entry| entry.value().clone()).collect())
+        Ok(self
+            .pending_bundles
+            .iter()
+            .map(|entry| entry.value().clone().into_bundle_with_status())
+            .collect())
     }
 
     async fn get_pending_bundle(&self, bundle_id: BundleId) -> Result<Option<BundleWithStatus>> {
-        Ok(self.pending_bundles.get(&bundle_id).map(|entry| entry.value().clone()))
+        Ok(self
+            .pending_bundles
+            .get(&bundle_id)
+            .map(|entry| entry.value().clone().into_bundle_with_status()))
     }
 
     async fn update_bundle_and_queue_transactions(
@@ -350,11 +417,11 @@ impl StorageApi for InMemoryStorage {
 
     async fn get_interop_status(&self, bundle_id: BundleId) -> Result<Option<BundleStatus>> {
         if let Some(bundle) = self.pending_bundles.get(&bundle_id) {
-            return Ok(Some(bundle.status));
+            return Ok(Some(bundle.status()));
         }
 
         if let Some(bundle) = self.finished_bundles.get(&bundle_id) {
-            return Ok(Some(bundle.status));
+            return Ok(Some(bundle.status()));
         }
 
         Ok(None)
@@ -364,7 +431,10 @@ impl StorageApi for InMemoryStorage {
         &self,
         bundle_id: BundleId,
     ) -> Result<Option<BundleWithStatus>> {
-        Ok(self.finished_bundles.get(&bundle_id).map(|v| v.clone()))
+        Ok(self
+            .finished_bundles
+            .get(&bundle_id)
+            .map(|v| v.value().clone().into_bundle_with_status()))
     }
 
     async fn store_pending_refund(
@@ -376,7 +446,7 @@ impl StorageApi for InMemoryStorage {
         self.pending_refunds.insert(bundle_id, refund_timestamp);
 
         if let Some(mut entry) = self.pending_bundles.get_mut(&bundle_id) {
-            entry.status = new_status;
+            entry.bundle_with_status.status = new_status;
         }
 
         Ok(())
@@ -402,7 +472,7 @@ impl StorageApi for InMemoryStorage {
     async fn mark_refund_ready(&self, bundle_id: BundleId, new_status: BundleStatus) -> Result<()> {
         // Update bundle status
         if let Some(mut bundle) = self.pending_bundles.get_mut(&bundle_id) {
-            bundle.status = new_status;
+            bundle.bundle_with_status.status = new_status;
         }
 
         // Remove from pending refunds
@@ -421,6 +491,7 @@ impl StorageApi for InMemoryStorage {
         self.pending_bundles
             .get_mut(&bundle_id)
             .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .bundle_with_status
             .status = status;
         Ok(())
     }
@@ -444,6 +515,7 @@ impl StorageApi for InMemoryStorage {
         self.pending_bundles
             .get_mut(&bundle.id)
             .ok_or_else(|| eyre::eyre!("Bundle not found"))?
+            .bundle_with_status
             .status = status;
 
         Ok(())
@@ -668,6 +740,118 @@ impl StorageApi for InMemoryStorage {
     async fn remove_precall(&self, chain_id: ChainId, eoa: Address, nonce: U256) -> Result<()> {
         self.precalls.remove(&(eoa, chain_id, nonce));
         Ok(())
+    }
+
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> Result<Vec<BundleHistoryEntry>> {
+        let mut filtered: Vec<BundleHistoryEntry> = Vec::new();
+
+        // Collect from pending bundles
+        for entry in self.pending_bundles.iter() {
+            let v = entry.value();
+            if v.bundle().dst_txs.iter().any(|tx| tx.kind.is_intent_for(address)) {
+                filtered.push(BundleHistoryEntry::Interop {
+                    bundle: Box::new(v.clone().into_bundle_with_status()),
+                    timestamp: v.created_at,
+                });
+            }
+        }
+
+        // Collect from finished bundles
+        for entry in self.finished_bundles.iter() {
+            let v = entry.value();
+            if v.bundle().dst_txs.iter().any(|tx| tx.kind.is_intent_for(address)) {
+                filtered.push(BundleHistoryEntry::Interop {
+                    bundle: Box::new(v.clone().into_bundle_with_status()),
+                    timestamp: v.created_at,
+                });
+            }
+        }
+
+        // Collect single-chain bundles from bundle_transactions
+        // Skip bundles that are already included as interop bundles
+        if let Some(txs_for_address) = self.transactions_by_address.get(&address) {
+            for bundle_entry in self.bundles.iter() {
+                let bundle_id = *bundle_entry.key();
+
+                // Skip if this bundle is an interop bundle (exists in either pending or finished)
+                if self.pending_bundles.contains_key(&bundle_id)
+                    || self.finished_bundles.contains_key(&bundle_id)
+                {
+                    continue;
+                }
+
+                let tx_ids = bundle_entry.value();
+
+                // Get the first transaction to extract quote and check address
+                if let Some(&tx_id) = tx_ids.first() {
+                    // Try to get the transaction from statuses to get chain_id and tx_hash
+                    if let Some(status_entry) = self.statuses.get(&tx_id) {
+                        let (chain_id, tx_status) = status_entry.value();
+
+                        // Get tx_hash from status
+                        let Some(tx_hash) = tx_status.tx_hash() else {
+                            continue;
+                        };
+
+                        // Get the transaction from transactions_by_address
+                        if let Some(relay_tx) = txs_for_address.iter().find(|tx| tx.id == tx_id)
+                            && let RelayTransactionKind::Intent { quote, .. } = &relay_tx.kind
+                        {
+                            filtered.push(BundleHistoryEntry::SingleChain {
+                                bundle_id,
+                                chain_id: *chain_id,
+                                quote: Some(quote.clone()),
+                                tx_hash: Some(tx_hash),
+                                timestamp: relay_tx.received_at.timestamp().try_into().unwrap_or(0),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by timestamp
+        filtered.sort_by_key(|entry| entry.timestamp());
+        if sort_desc {
+            filtered.reverse();
+        }
+
+        Ok(filtered.into_iter().skip(offset as usize).take(limit as usize).collect())
+    }
+
+    async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64> {
+        // Count multi-chain bundles
+        let multichain_count = self
+            .pending_bundles
+            .iter()
+            .chain(self.finished_bundles.iter())
+            .filter(|entry| {
+                entry.value().bundle().dst_txs.iter().any(|tx| tx.kind.is_intent_for(address))
+            })
+            .count();
+
+        // Count single-chain bundles
+        let singlechain_count = self
+            .bundles
+            .iter()
+            .filter(|bundle_entry| {
+                let tx_ids = bundle_entry.value();
+                if let Some(&tx_id) = tx_ids.first()
+                    && let Some(tx) = self.find_transaction(tx_id)
+                {
+                    return tx.kind.is_intent_for(address);
+                }
+                false
+            })
+            .count();
+
+        Ok((multichain_count + singlechain_count) as u64)
     }
 }
 

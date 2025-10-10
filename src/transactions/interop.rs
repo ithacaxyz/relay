@@ -13,8 +13,10 @@ use crate::{
     liquidity::{LiquidityTracker, LiquidityTrackerError},
     storage::{RelayStorage, StorageApi},
     types::{
-        InteropTransactionBatch, OrchestratorContract::IntentExecuted, TransactionServiceHandles,
-        rpc::BundleId,
+        InteropTransactionBatch,
+        OrchestratorContract::IntentExecuted,
+        TransactionServiceHandles,
+        rpc::{BundleId, CallStatusCode},
     },
 };
 use alloy::{
@@ -338,6 +340,15 @@ impl BundleStatus {
     /// Whether status is [`Self::RefundsScheduled`].
     pub fn is_refunds_scheduled(&self) -> bool {
         matches!(self, Self::RefundsScheduled)
+    }
+
+    /// Converts to call status code for RPC responses.
+    pub fn to_call_status_code(&self) -> CallStatusCode {
+        match self {
+            Self::Done => CallStatusCode::Confirmed,
+            Self::Failed => CallStatusCode::Failed,
+            _ => CallStatusCode::Pending,
+        }
     }
 
     /// Check if this status can transition to another status

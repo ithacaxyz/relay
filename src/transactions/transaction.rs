@@ -1,6 +1,6 @@
 use crate::{
     interop::EscrowDetails,
-    types::{IEscrow, Quote, SignedCalls},
+    types::{IEscrow, Quote, SignedCalls, rpc::CallStatusCode},
 };
 use alloy::{
     consensus::{Transaction, TxEip1559, TxEip7702, TxEnvelope, TypedTransaction},
@@ -59,6 +59,11 @@ impl RelayTransactionKind {
             Self::Intent { quote, .. } => quote.chain_id,
             Self::Internal { chain_id, .. } => *chain_id,
         }
+    }
+
+    /// Returns true if this is an Intent transaction for the given EOA address.
+    pub fn is_intent_for(&self, address: Address) -> bool {
+        matches!(self, Self::Intent { quote, .. } if *quote.intent.eoa() == address)
     }
 }
 
@@ -331,6 +336,15 @@ impl TransactionStatus {
             Self::Pending(hash) => Some(*hash),
             Self::Confirmed(receipt) => Some(receipt.transaction_hash),
             _ => None,
+        }
+    }
+
+    /// Converts to call status code for RPC responses.
+    pub fn to_call_status_code(&self) -> CallStatusCode {
+        match self {
+            Self::Confirmed(_) => CallStatusCode::Confirmed,
+            Self::Failed(_) => CallStatusCode::Failed,
+            _ => CallStatusCode::Pending,
         }
     }
 }

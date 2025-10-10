@@ -10,7 +10,8 @@ use crate::{
     provider::ProviderExt,
     rpc::ExtraFeeInfo,
     signers::Eip712PayLoadSigner,
-    transactions::interop::InteropBundle,
+    storage::BundleHistoryEntry,
+    transactions::{RelayTransactionKind, interop::InteropBundle},
     types::{
         Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
         AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
@@ -20,11 +21,13 @@ use crate::{
         Quotes, SignedCall, SignedCalls, SourcedAsset, Transfer, VersionedContracts,
         rpc::{
             AddFaucetFundsParameters, AddFaucetFundsResponse, AddressOrNative, Asset7811,
-            AssetFilterItem, CallKey, CallReceipt, CallStatusCode, ChainCapabilities,
-            ChainFeeToken, ChainFees, GetAssetsParameters, GetAssetsResponse,
-            GetAuthorizationParameters, GetAuthorizationResponse, Meta, PreCallContext,
-            PrepareCallsCapabilities, PrepareCallsContext, PrepareUpgradeAccountResponse,
-            RelayCapabilities, RequiredAsset, SendPreparedCallsCapabilities, UpgradeAccountContext,
+            AssetFilterItem, CallHistoryCapabilities, CallHistoryEntry, CallHistoryTransaction,
+            CallKey, CallReceipt, CallStatusCode, ChainCapabilities, ChainFeeToken, ChainFees,
+            GetAssetsParameters, GetAssetsResponse, GetAuthorizationParameters,
+            GetAuthorizationResponse, GetCallsHistoryParameters, GetCallsHistoryResponse, Meta,
+            PreCallContext, PrepareCallsCapabilities, PrepareCallsContext,
+            PrepareUpgradeAccountResponse, RelayCapabilities, RequiredAsset,
+            SendPreparedCallsCapabilities, SortDirection, UpgradeAccountContext,
             UpgradeAccountDigests, ValidSignatureProof,
         },
     },
@@ -137,6 +140,15 @@ pub trait RelayApi {
     /// The identifier of the batch is the value returned from `send_prepared_calls`.
     #[method(name = "getCallsStatus")]
     async fn get_calls_status(&self, parameters: BundleId) -> RpcResult<CallsStatus>;
+
+    /// Get the history of call bundles for a given address.
+    ///
+    /// Returns paginated list of bundles with their status, transactions, and capabilities.
+    #[method(name = "getCallsHistory")]
+    async fn get_calls_history(
+        &self,
+        params: GetCallsHistoryParameters,
+    ) -> RpcResult<GetCallsHistoryResponse>;
 
     /// Get the status of a call batch that was sent via `send_prepared_calls`.
     ///
@@ -3047,6 +3059,183 @@ impl RelayApiServer for Relay {
                 .collect(),
             capabilities,
         })
+    }
+
+    #[instrument(skip(self), fields(address = %params.address))]
+    async fn get_calls_history(
+        &self,
+        params: GetCallsHistoryParameters,
+    ) -> RpcResult<GetCallsHistoryResponse> {
+        if params.limit == 0 || params.limit > 100 {
+            return Err(RelayError::internal_msg("limit must be between 1 and 100").into());
+        }
+
+        // Calculate offset from index
+        // Note: For desc sort with no index, we need total count (slow)
+        let (offset, sort_desc) = match params.sort {
+            SortDirection::Asc => {
+                let offset = params.index.unwrap_or(0);
+                (offset, false)
+            }
+            SortDirection::Desc => {
+                if let Some(index) = params.index {
+                    // User provided index - no count needed
+                    (index, true)
+                } else {
+                    // No index provided - must get total count to default to end (slow)
+                    // Spec: "If not provided, it will default to total bundle count for desc"
+                    let total =
+                        self.inner.storage.get_bundle_count_by_address(params.address).await?;
+
+                    // Start from the end
+                    (total.saturating_sub(params.limit), true)
+                }
+            }
+        };
+
+        // Fetch bundles from underlying storage
+        let bundles = self
+            .inner
+            .storage
+            .get_bundles_by_address(params.address, params.limit, offset, sort_desc)
+            .await?;
+
+        let entries_futures = bundles.into_iter().enumerate().map(async |(idx, history_entry)| {
+            let index: u64 = offset + idx as u64;
+
+            let entry = match history_entry {
+                // Multi-chain bundle path
+                BundleHistoryEntry::Interop { bundle: bundle_with_status, timestamp } => {
+                    let bundle = &bundle_with_status.bundle;
+                    let status = bundle_with_status.status;
+
+                    // Extract key hash from first destination transaction signature
+                    // For 65-byte EOA signatures, use 0x0 as keyHash
+                    let key_hash = bundle
+                        .dst_txs
+                        .first()
+                        .and_then(|tx| match &tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => {
+                                if quote.intent.signature().len() == 65 {
+                                    // Signed by the root eoa key.
+                                    Some(B256::ZERO)
+                                } else {
+                                    Signature::decode_key_hash(quote.intent.signature())
+                                }
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(B256::ZERO);
+
+                    // Get transaction statuses using batch method
+                    let all_tx_ids: Vec<_> = bundle
+                        .src_txs
+                        .iter()
+                        .chain(bundle.dst_txs.iter())
+                        .map(|tx| tx.id)
+                        .collect();
+
+                    let tx_statuses =
+                        self.inner.storage.read_transaction_statuses(&all_tx_ids).await?;
+
+                    let mut transactions = Vec::with_capacity(tx_statuses.len());
+                    for tx_status_opt in tx_statuses {
+                        if let Some((chain_id, tx_status)) = tx_status_opt
+                            && let Some(tx_hash) = tx_status.tx_hash()
+                        {
+                            transactions.push(CallHistoryTransaction {
+                                chain_id,
+                                transaction_hash: tx_hash,
+                            });
+                        }
+                    }
+
+                    // Extract quotes from bundle (both src and dst transactions)
+                    let quotes = bundle
+                        .src_txs
+                        .iter()
+                        .chain(bundle.dst_txs.iter())
+                        .filter_map(|tx| match &tx.kind {
+                            RelayTransactionKind::Intent { quote, .. } => Some((**quote).clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+
+                    // TODO: Implement asset diff
+                    let asset_diff = AssetDiffResponse::default();
+
+                    CallHistoryEntry {
+                        id: bundle.id,
+                        index,
+                        status: status.to_call_status_code(),
+                        timestamp,
+                        transactions,
+                        key_hash,
+                        capabilities: CallHistoryCapabilities { asset_diff, quotes },
+                    }
+                }
+
+                // Single-chain bundle path
+                BundleHistoryEntry::SingleChain {
+                    bundle_id,
+                    chain_id,
+                    quote,
+                    tx_hash,
+                    timestamp,
+                } => {
+                    let (key_hash, quotes) = if let Some(quote) = quote {
+                        let key_hash = if quote.intent.signature().len() == 65 {
+                            // Signed by root eoa key
+                            B256::ZERO
+                        } else {
+                            Signature::decode_key_hash(quote.intent.signature())
+                                .unwrap_or(B256::ZERO)
+                        };
+                        (key_hash, vec![(*quote)])
+                    } else {
+                        // Old transaction without stored quote data
+                        (B256::ZERO, vec![])
+                    };
+
+                    // Build transaction list (only if tx_hash exists)
+                    let transactions = tx_hash
+                        .map(|tx_hash| {
+                            vec![CallHistoryTransaction { chain_id, transaction_hash: tx_hash }]
+                        })
+                        .unwrap_or_default();
+
+                    // TODO: Implement asset diff
+                    let asset_diff = AssetDiffResponse::default();
+
+                    // Get tx_id from bundle_transactions table
+                    let tx_ids = self.inner.storage.get_bundle_transactions(bundle_id).await?;
+                    let call_status = if let Some(&tx_id) = tx_ids.first() {
+                        self.inner
+                            .storage
+                            .read_transaction_status(tx_id)
+                            .await?
+                            .map(|(_, tx_status)| tx_status.to_call_status_code())
+                            .unwrap_or(CallStatusCode::Pending)
+                    } else {
+                        CallStatusCode::Pending
+                    };
+
+                    CallHistoryEntry {
+                        id: bundle_id,
+                        index,
+                        status: call_status,
+                        timestamp,
+                        transactions,
+                        key_hash,
+                        capabilities: CallHistoryCapabilities { asset_diff, quotes },
+                    }
+                }
+            };
+
+            Ok::<_, StorageError>(entry)
+        });
+
+        Ok(try_join_all(entries_futures).await?)
     }
 
     async fn verify_signature(

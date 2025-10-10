@@ -9,7 +9,7 @@ use crate::{
     storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY,
-        Erc20Slots, Key, KeyType, SignedCall, SignedCalls, SignedQuotes, VersionedContracts,
+        Erc20Slots, Key, KeyType, Quote, SignedCall, SignedCalls, SignedQuotes, VersionedContracts,
     },
 };
 use alloy::{
@@ -721,6 +721,76 @@ pub struct CallsStatusCapabilities {
     /// Interop bundle status if this is an interop bundle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interop_status: Option<BundleStatus>,
+}
+
+/// Request parameters for `wallet_getCallsHistory`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetCallsHistoryParameters {
+    /// Account address to get call history for.
+    pub address: Address,
+    /// Index to start from (defaults based on sort direction).
+    #[serde(default)]
+    pub index: Option<u64>,
+    /// Number of bundles to fetch.
+    pub limit: u64,
+    /// Sort direction: "asc" (oldest first) or "desc" (newest first).
+    pub sort: SortDirection,
+}
+
+/// Sort direction for call history.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDirection {
+    /// Ascending (oldest first).
+    Asc,
+    /// Descending (newest first).
+    Desc,
+}
+
+/// Response for `wallet_getCallsHistory`.
+pub type GetCallsHistoryResponse = Vec<CallHistoryEntry>;
+
+/// A single entry in the call history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallHistoryEntry {
+    /// Bundle identifier.
+    pub id: BundleId,
+    /// Index of bundle in user's history.
+    pub index: u64,
+    /// Bundle status.
+    pub status: CallStatusCode,
+    /// Timestamp when bundle was included (finished_at or created_at).
+    pub timestamp: u64,
+    /// Transactions in the bundle.
+    pub transactions: Vec<CallHistoryTransaction>,
+    /// Hash of the key used to sign the bundle.
+    pub key_hash: B256,
+    /// Bundle capabilities.
+    pub capabilities: CallHistoryCapabilities,
+}
+
+/// A transaction in call history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallHistoryTransaction {
+    /// Chain ID where transaction was executed.
+    #[serde(with = "alloy::serde::quantity")]
+    pub chain_id: ChainId,
+    /// Transaction hash.
+    pub transaction_hash: TxHash,
+}
+
+/// Capabilities for call history entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallHistoryCapabilities {
+    /// Asset diffs by chain (includes fee_totals via flatten).
+    #[serde(flatten)]
+    pub asset_diff: AssetDiffResponse,
+    /// Quote information.
+    pub quotes: Vec<Quote>,
 }
 
 #[cfg(test)]

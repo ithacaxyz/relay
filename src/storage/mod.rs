@@ -6,7 +6,7 @@ use alloy::{
     primitives::{BlockNumber, U256},
     rpc::types::TransactionReceipt,
 };
-pub use api::{LockLiquidityInput, OnrampContactInfo, StorageApi};
+pub use api::{BundleHistoryEntry, LockLiquidityInput, OnrampContactInfo, StorageApi};
 
 mod memory;
 mod pg;
@@ -93,6 +93,13 @@ impl StorageApi for RelayStorage {
         tx: TxId,
     ) -> api::Result<Option<(ChainId, TransactionStatus)>> {
         self.inner.read_transaction_status(tx).await
+    }
+
+    async fn read_transaction_statuses(
+        &self,
+        tx_ids: &[TxId],
+    ) -> api::Result<Vec<Option<(ChainId, TransactionStatus)>>> {
+        self.inner.read_transaction_statuses(tx_ids).await
     }
 
     async fn add_bundle_tx(&self, bundle: BundleId, tx: TxId) -> api::Result<()> {
@@ -400,5 +407,19 @@ impl StorageApi for RelayStorage {
         nonce: U256,
     ) -> api::Result<()> {
         self.inner.remove_precall(chain_id, eoa, nonce).await
+    }
+
+    async fn get_bundles_by_address(
+        &self,
+        address: Address,
+        limit: u64,
+        offset: u64,
+        sort_desc: bool,
+    ) -> api::Result<Vec<api::BundleHistoryEntry>> {
+        self.inner.get_bundles_by_address(address, limit, offset, sort_desc).await
+    }
+
+    async fn get_bundle_count_by_address(&self, address: Address) -> api::Result<u64> {
+        self.inner.get_bundle_count_by_address(address).await
     }
 }
