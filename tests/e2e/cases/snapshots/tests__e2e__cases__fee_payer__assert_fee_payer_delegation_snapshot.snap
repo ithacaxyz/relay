@@ -1,64 +1,13 @@
 ---
-source: tests/e2e/cases/rpc_snap.rs
-expression: value
+source: tests/e2e/cases/fee_payer.rs
+expression: response_value
 ---
 {
   "capabilities": {
-    "assetDiffs": {
-      "0x7a69": [
-        [
-          "0x0000000000000000000000000000000000000000",
-          [
-            {
-              "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
-              "decimals": 18,
-              "direction": "incoming",
-              "fiat": {
-                "currency": "usd",
-                "value": "0.000000000000000002"
-              },
-              "name": "mockName",
-              "recipients": [],
-              "symbol": "mockSymbol",
-              "type": "erc20",
-              "value": "0x2"
-            }
-          ]
-        ],
-        [
-          "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
-          [
-            {
-              "address": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
-              "decimals": 18,
-              "direction": "outgoing",
-              "fiat": {
-                "currency": "usd",
-                "value": "0.000000000000000001"
-              },
-              "name": "mockName",
-              "recipients": [
-                "0x0000000000000000000000000000000000000000"
-              ],
-              "symbol": "mockSymbol",
-              "type": "erc20",
-              "value": "0x1"
-            }
-          ]
-        ]
-      ]
-    },
+    "assetDiffs": "[assetDiffs]",
     "authorizeKeys": [],
-    "feeTotals": {
-      "0x0": {
-        "currency": "usd",
-        "value": "[value]"
-      },
-      "0x7a69": {
-        "currency": "usd",
-        "value": "[value]"
-      }
-    },
+    "feePayerDigest": "[feePayerDigest]",
+    "feeTotals": "[feeTotals]",
     "revokeKeys": []
   },
   "context": {
@@ -69,41 +18,39 @@ expression: value
       "quotes": [
         {
           "additionalAuthorization": null,
-          "authorizationAddress": "0x29a79095352a718b3d7fe84e1f14e9f34a35598e",
-          "chainId": "0x7a69",
+          "authorizationAddress": null,
+          "chainId": "[chainId]",
           "ethPrice": "0xde0b6b3a7640000",
-          "extraPayment": "0x0",
+          "extraPayment": "[extraPayment]",
           "feeTokenDeficit": "0x0",
           "intent": {
             "combinedGas": "[combinedGas]",
             "encodedFundTransfers": [],
-            "encodedPreCalls": [
-              "[encodedPreCall]"
-            ],
+            "encodedPreCalls": [],
             "eoa": "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
-            "executionData": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000ed1db453c3156ff3155a97ad217b3087d5dc5f6e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044a9059cbb0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000",
+            "executionData": "[executionData]",
             "expiry": "0x0",
             "funder": "0x0000000000000000000000000000000000000000",
             "funderSignature": "0x",
             "isMultichain": false,
-            "nonce": "0x0",
-            "payer": "0x0000000000000000000000000000000000000000",
-            "paymentAmount": "[paymentMaxAmount]",
+            "nonce": "[nonce]",
+            "payer": "[payer]",
+            "paymentAmount": "[paymentAmount]",
             "paymentMaxAmount": "[paymentMaxAmount]",
             "paymentRecipient": "0x0000000000000000000000000000000000000000",
             "paymentSignature": "0x",
-            "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+            "paymentToken": "[paymentToken]",
             "settler": "0x0000000000000000000000000000000000000000",
             "settlerContext": "0x",
             "signature": "0x",
-            "supportedAccountImplementation": "0xb19b36b1456e65e3a6d514d3f715f204bd59f431"
+            "supportedAccountImplementation": "[supportedAccountImplementation]"
           },
           "nativeFeeEstimate": {
             "maxFeePerGas": "[maxFeePerGas]",
-            "maxPriorityFeePerGas": "0x1"
+            "maxPriorityFeePerGas": "[maxPriorityFeePerGas]"
           },
-          "orchestrator": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
-          "paymentTokenDecimals": 18,
+          "orchestrator": "[orchestrator]",
+          "paymentTokenDecimals": "[paymentTokenDecimals]",
           "txGas": "[txGas]"
         }
       ],
@@ -117,37 +64,35 @@ expression: value
   "digest": "[digest]",
   "key": {
     "prehash": false,
-    "publicKey": "0x0000000000000000000000001409e2aad496505095defaaa2baff67c65168e65",
+    "publicKey": "[publicKey]",
     "type": "secp256k1"
   },
   "signature": "[signature]",
   "typedData": {
     "domain": {
-      "chainId": "0x7a69",
+      "chainId": "[chainId]",
       "name": "Orchestrator",
-      "verifyingContract": "0x700b6a60ce7eaaea56f065753d8dcb9653dbad35",
+      "verifyingContract": "[verifyingContract]",
       "version": "0.5.5"
     },
     "message": {
       "calls": [
         {
-          "data": "0xa9059cbb00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-          "to": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+          "data": "[data]",
+          "to": "[to]",
           "value": "0x0"
         }
       ],
       "combinedGas": "[combinedGas]",
       "encodedFundTransfers": [],
-      "encodedPreCalls": [
-        "[encodedPreCall]"
-      ],
+      "encodedPreCalls": [],
       "eoa": "0xa023ba34fe23ad51d00515a68657e232ab6a1297",
       "expiry": "0x0",
       "multichain": false,
-      "nonce": "0x0",
-      "payer": "0x0000000000000000000000000000000000000000",
+      "nonce": "[nonce]",
+      "payer": "[payer]",
       "paymentMaxAmount": "[paymentMaxAmount]",
-      "paymentToken": "0xed1db453c3156ff3155a97ad217b3087d5dc5f6e",
+      "paymentToken": "[paymentToken]",
       "settler": "0x0000000000000000000000000000000000000000"
     },
     "primaryType": "Intent",

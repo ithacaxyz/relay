@@ -76,6 +76,10 @@ pub struct InteropBundle {
     /// If any verifications fail, this contains the GUIDs of messages that couldn't be verified.
     /// When this is non-empty, the bundle should go to Failed state instead of Done.
     pub failed_verifications: Vec<B256>,
+    /// Fee payer transaction.
+    ///
+    /// Populated when fee_payer is specified and needs to transfer fees from a non-interop chain.
+    pub fee_payer_tx: Option<RelayTransaction>,
 }
 
 impl InteropBundle {
@@ -91,15 +95,18 @@ impl InteropBundle {
             settlement_txs: Vec::new(),
             execute_receive_txs: Vec::new(),
             failed_verifications: vec![],
+            fee_payer_tx: None,
         }
     }
 
     /// Appends transactions to the appropriate field based on the transaction type.
     /// Only settlement-related transactions are appended (ExecuteSend, ExecuteReceive, Refund).
-    /// Source and Destination transactions are assumed to already be in the bundle.
+    /// Source, Destination, and FeePayer transactions are assumed to already be in the bundle.
     pub fn append_transactions(&mut self, batch: &InteropTransactionBatch<'_>) {
         match batch {
-            InteropTransactionBatch::Source(_) | InteropTransactionBatch::Destination(_) => {
+            InteropTransactionBatch::Source(_)
+            | InteropTransactionBatch::Destination(_)
+            | InteropTransactionBatch::FeePayer(_) => {
                 // These are already in the bundle, no need to append
             }
             InteropTransactionBatch::ExecuteSend(txs) => {
@@ -240,8 +247,16 @@ pub enum BundleStatus {
     Init,
     /// Liquidity for destination transactions was locked.
     ///
-    /// Next: [`Self::SourceQueued`]
+    /// Next: [`Self::FeePayerQueued`] OR [`Self::SourceQueued`]
     LiquidityLocked,
+    /// Fee payer transaction is queued
+    ///
+    /// Next: [`Self::FeePayerCompleted`] OR [`Self::Failed`]
+    FeePayerQueued,
+    /// Fee payer transaction is completed
+    ///
+    /// Next: [`Self::SourceQueued`]
+    FeePayerCompleted,
     /// Source transactions are queued
     ///
     /// Next: [`Self::SourceConfirmed`] OR [`Self::SourceFailures`]
@@ -342,7 +357,11 @@ impl BundleStatus {
         matches!(
             (self, next),
             (Init, LiquidityLocked)
+                | (LiquidityLocked, FeePayerQueued)
                 | (LiquidityLocked, SourceQueued)
+                | (FeePayerQueued, FeePayerCompleted)
+                | (FeePayerQueued, Failed)
+                | (FeePayerCompleted, SourceQueued)
                 | (SourceQueued, SourceConfirmed)
                 | (SourceQueued, SourceFailures)
                 | (SourceConfirmed, DestinationQueued)
@@ -353,6 +372,7 @@ impl BundleStatus {
                 | (DestinationFailures, RefundsScheduled)
                 | (DestinationFailures, Failed)
                 | (DestinationConfirmed, SettlementsQueued)
+                | (DestinationConfirmed, Done)
                 | (SettlementsQueued, SettlementsProcessing)
                 | (SettlementsQueued, Failed)
                 | (SettlementsProcessing, SettlementCompletionQueued)
@@ -501,14 +521,53 @@ impl InteropServiceInner {
         Ok(())
     }
 
-    /// Handle the LiquidityLocked status - queue source transactions
+    /// Handle the LiquidityLocked status - queue fee payer or source transactions
     ///
-    /// Transitions to: [`BundleStatus::SourceQueued`]
+    /// Transitions to: [`BundleStatus::FeePayerQueued`] or [`BundleStatus::SourceQueued`]
     async fn on_liquidity_locked(
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
-        tracing::info!(bundle_id = ?bundle.bundle.id, "Sending source transactions");
+        let batch = if let Some(fee_payer_tx) = &bundle.bundle.fee_payer_tx {
+            tracing::info!(bundle_id = ?bundle.bundle.id, "Sending fee payer transaction");
+            InteropTransactionBatch::FeePayer(fee_payer_tx)
+        } else {
+            tracing::info!(bundle_id = ?bundle.bundle.id, "Sending source transactions");
+            InteropTransactionBatch::Source(&bundle.bundle.src_txs)
+        };
+
+        bundle.status = self.queue_and_send_bundle_transactions(bundle, batch).await?;
+        Ok(())
+    }
+
+    /// Handle the FeePayerQueued status - wait for fee payer transaction to complete
+    ///
+    /// Transitions to: [`BundleStatus::FeePayerCompleted`] or [`BundleStatus::Failed`]
+    async fn on_fee_payer_queued(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Processing fee payer transaction");
+        let tx = bundle.bundle.fee_payer_tx.as_ref().unwrap();
+        bundle.status = self
+            .watch_prerequisite_intents(
+                &bundle.bundle,
+                std::iter::once(tx),
+                BundleStatus::FeePayerCompleted,
+                BundleStatus::Failed,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Handle the FeePayerCompleted status - queue source transactions
+    ///
+    /// Transitions to: [`BundleStatus::SourceQueued`]
+    async fn on_fee_payer_completed(
+        &self,
+        bundle: &mut BundleWithStatus,
+    ) -> Result<(), InteropBundleError> {
+        tracing::info!(bundle_id = ?bundle.bundle.id, "Fee payer completed, sending source transactions");
 
         // Queue and send source transactions
         bundle.status = self
@@ -529,29 +588,14 @@ impl InteropServiceInner {
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
         tracing::info!(bundle_id = ?bundle.bundle.id, "Processing source transactions");
-
-        // Wait for all source transactions to complete
-        let results = self.watch_intent_transactions(bundle.bundle.src_txs.iter()).await?;
-
-        let mut new_status = BundleStatus::SourceConfirmed;
-        for (tx_id, result) in results {
-            if result.is_err() {
-                tracing::error!(tx_id = ?tx_id, bundle_id = ?bundle.bundle.id, "Source transaction failed");
-                new_status = BundleStatus::SourceFailures;
-                break;
-            }
-            tracing::debug!(tx_id = ?tx_id, "Source transaction succeeded");
-        }
-
-        if new_status != BundleStatus::SourceConfirmed {
-            self.storage
-                .unlock_bundle_liquidity(&bundle.bundle, HashMap::default(), new_status)
-                .await?;
-            bundle.status = new_status;
-        } else {
-            self.update_bundle_status(bundle, new_status).await?;
-        }
-
+        bundle.status = self
+            .watch_prerequisite_intents(
+                &bundle.bundle,
+                bundle.bundle.src_txs.iter(),
+                BundleStatus::SourceConfirmed,
+                BundleStatus::SourceFailures,
+            )
+            .await?;
         Ok(())
     }
 
@@ -643,11 +687,21 @@ impl InteropServiceInner {
 
     /// Handle the DestinationConfirmed status - queue settlement transactions
     ///
-    /// Transitions to: [`BundleStatus::SettlementsQueued`]
+    /// Transitions to: [`BundleStatus::SettlementsQueued`] or [`BundleStatus::Done`]
     async fn on_destination_confirmed(
         &self,
         bundle: &mut BundleWithStatus,
     ) -> Result<(), InteropBundleError> {
+        // Skip settlement if no source transactions (cross-chain fee payer only bundle)
+        if bundle.bundle.src_txs.is_empty() {
+            tracing::info!(
+                bundle_id = ?bundle.bundle.id,
+                "No source transactions - skipping settlement, marking as done"
+            );
+            self.update_bundle_status(bundle, BundleStatus::Done).await?;
+            return Ok(());
+        }
+
         tracing::info!(bundle_id = ?bundle.bundle.id, "All transactions confirmed, processing settlements");
 
         // Build settlements
@@ -905,6 +959,35 @@ impl InteropServiceInner {
         Ok(())
     }
 
+    /// Watch prerequisite intent transactions (fee payer or source) until completion.
+    ///
+    /// These intents must succeed before destination transactions can be sent. If any fail,
+    /// the funder's locked liquidity will be unlocked.
+    ///
+    /// Returns the new bundle status.
+    async fn watch_prerequisite_intents<'a>(
+        &self,
+        bundle: &InteropBundle,
+        txs: impl IntoIterator<Item = &'a RelayTransaction>,
+        success_status: BundleStatus,
+        failure_status: BundleStatus,
+    ) -> Result<BundleStatus, InteropBundleError> {
+        let results = self.watch_intent_transactions(txs.into_iter()).await?;
+
+        let new_status = if results.iter().any(|(_, result)| result.is_err()) {
+            tracing::error!(bundle_id = ?bundle.id, "Transaction failed");
+            failure_status
+        } else {
+            success_status
+        };
+
+        if new_status != success_status {
+            self.storage.unlock_bundle_liquidity(bundle, HashMap::default(), new_status).await?;
+        }
+
+        Ok(new_status)
+    }
+
     /// Watch intent transactions until they complete.
     async fn watch_intent_transactions(
         &self,
@@ -1130,6 +1213,8 @@ impl InteropServiceInner {
             match bundle.status {
                 BundleStatus::Init => self.on_init(&mut bundle).await?,
                 BundleStatus::LiquidityLocked => self.on_liquidity_locked(&mut bundle).await?,
+                BundleStatus::FeePayerQueued => self.on_fee_payer_queued(&mut bundle).await?,
+                BundleStatus::FeePayerCompleted => self.on_fee_payer_completed(&mut bundle).await?,
                 BundleStatus::SourceQueued => self.on_source_queued(&mut bundle).await?,
                 BundleStatus::SourceConfirmed => self.on_source_confirmed(&mut bundle).await?,
                 BundleStatus::SourceFailures => self.on_source_failures(&mut bundle).await?,
@@ -1372,6 +1457,7 @@ mod tests {
         assert!(DestinationFailures.can_transition_to(&RefundsScheduled));
         assert!(DestinationFailures.can_transition_to(&Failed));
         assert!(DestinationConfirmed.can_transition_to(&SettlementsQueued));
+        assert!(DestinationConfirmed.can_transition_to(&Done));
         assert!(SettlementsQueued.can_transition_to(&SettlementsProcessing));
         assert!(SettlementsQueued.can_transition_to(&Failed));
         assert!(SettlementsProcessing.can_transition_to(&SettlementCompletionQueued));

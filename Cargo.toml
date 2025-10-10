@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "25.0.1"
+version = "26.0.1"
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"

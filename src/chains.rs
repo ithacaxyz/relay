@@ -158,22 +158,22 @@ impl Chain {
             // environment
             .append(mock_from, AccountOverride::default().with_balance(U256::MAX))
             .append(
-                intent.eoa,
+                context.fee_payer,
                 AccountOverride::default()
-                    // If the fee token is the native token, we override it
-                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance))
-                    // we manually fetch the 7702 designator since we do not have a signed auth item
-                    .with_7702_delegation_designator_opt(context.stored_auth_address()),
+                    // If the fee token is the native token, override the fee payer's balance
+                    .with_balance_opt(context.fee_token.is_zero().then_some(new_fee_token_balance)),
             )
-            .extend(context.state_overrides.clone())
-            .append_opt(|| {
-                context.additional_authorization.clone().map(|(addr, auth)| {
-                    (
-                        addr,
-                        AccountOverride::default().with_7702_delegation_designator(*auth.address()),
-                    )
-                })
-            });
+            .extend(context.state_overrides.clone());
+
+        // Set 7702 delegation designator for EOA if stored auth exists
+        if let Some(auth_addr) = context.stored_auth_address() {
+            overrides = overrides.with_7702_delegation_designator(intent.eoa, auth_addr);
+        }
+
+        // Set 7702 delegation for additional authorization if present
+        if let Some((addr, auth)) = &context.additional_authorization {
+            overrides = overrides.with_7702_delegation_designator(*addr, *auth.address());
+        }
 
         // If the fee token is an ERC20, we do a balance override, merging it with the client
         // supplied balance override if necessary.
@@ -183,7 +183,7 @@ impl Chain {
                     .balance_overrides
                     .clone()
                     .modify_token(context.fee_token, |balance| {
-                        balance.add_balance(intent.eoa, new_fee_token_balance);
+                        balance.add_balance(context.fee_payer, new_fee_token_balance);
                     })
                     .into_state_overrides(self.provider(), self.erc20_slots())
                     .await?,

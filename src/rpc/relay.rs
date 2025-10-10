@@ -368,8 +368,9 @@ impl Relay {
         let mock_from = Address::random();
 
         // Prepare futures for concurrent execution
-        let user_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
-            intent.eoa,
+        // Fetch balance for fee_payer (already coalesced to EOA if not specified)
+        let fee_payer_balance_fut = self.get_assets(GetAssetsParameters::for_asset_on_chain(
+            context.fee_payer,
             chain_id,
             context.fee_token,
         ));
@@ -385,18 +386,21 @@ impl Relay {
             self.inner.price_oracle.native_conversion_rate(token_uid.clone(), native_uid.clone());
 
         // Execute all futures in parallel and handle errors
-        let (assets_response, fee_history, eth_price) = try_join!(
-            async { user_balance_fut.await.map_err(RelayError::internal) },
+        let (fee_token_balance, fee_history, eth_price) = try_join!(
+            async {
+                fee_payer_balance_fut
+                    .await
+                    .map(|r| r.balance_on_chain(chain_id, context.fee_token.into()))
+                    .map_err(RelayError::internal)
+            },
             async { fee_history_fut.await.map_err(RelayError::from) },
             async { Ok(native_price_fut.await) }
         )?;
 
-        let fee_token_balance =
-            assets_response.balance_on_chain(chain_id, context.fee_token.into());
-
         let fee_token_funding = intent
             .fund_transfers
             .iter()
+            .filter(|_| context.fee_payer == intent.eoa)
             .filter(|(token, _)| *token == context.fee_token)
             .map(|(_, amount)| amount)
             .sum::<U256>();
@@ -584,11 +588,12 @@ impl Relay {
         );
         intent_to_sign.set_payment(payment_amount);
 
-        // Find amount of fee token spent by this intent.
+        // Find amount of fee token spent by this intent if payed by the user.
         let fee_token_spending = asset_diffs
             .0
             .iter()
-            .find(|(address, _)| *address == intent.eoa)
+            .filter(|_| intent_to_sign.payer().is_zero())
+            .find(|(address, _)| *address == context.fee_payer)
             .and_then(|(_, diffs)| {
                 diffs.iter().find(|diff| diff.address.unwrap_or_default() == context.fee_token)
             })
@@ -605,13 +610,14 @@ impl Relay {
             })
             .unwrap_or(fee_token_funding);
 
-        // Calculate fee token deficit accounting for any additional spending
+        // Calculate fee token deficit accounting for any additional spending.
         let fee_token_deficit = intent_to_sign.total_payment_max_amount().saturating_sub(
             fee_token_balance.saturating_add(fee_token_funding).saturating_sub(fee_token_spending),
         );
 
-        // Record fee token deficit in asset deficits
-        if !fee_token_deficit.is_zero() {
+        // Record fee token deficit in asset deficits only if no fee_payer was specified
+        // If there's a fee_payer, the deficit is their responsibility, not the user's
+        if !fee_token_deficit.is_zero() && intent_to_sign.payer().is_zero() {
             if let Some(existing) = asset_deficits
                 .0
                 .iter_mut()
@@ -676,7 +682,9 @@ impl Relay {
         }
 
         // If any of the quotes have deficits, return an error
-        if quotes.ty().quotes.iter().any(|q| q.has_deficits()) {
+        if quotes.ty().quotes.iter().any(|q| q.has_deficits())
+            || quotes.ty().fee_payer_quote.as_ref().is_some_and(|fp| fp.has_deficits())
+        {
             return Err(QuoteError::QuoteHasDeficits.into());
         }
 
@@ -691,8 +699,8 @@ impl Relay {
 
         let bundle_id = BundleId(*quotes.hash());
 
-        // single chain workflow
-        if quotes.ty().multi_chain_root.is_none() {
+        // Use multichain workflow if there's a merkle root OR a fee_payer quote
+        if quotes.ty().multi_chain_root.is_none() && quotes.ty().fee_payer_quote.is_none() {
             self.send_single_chain_intent(&quotes, capabilities, signature, bundle_id).await
         } else {
             self.send_multichain_intents(quotes, capabilities, signature, bundle_id).await
@@ -1045,6 +1053,7 @@ impl Relay {
             false,
             FeeEstimationContext {
                 fee_token: Address::ZERO,
+                fee_payer: account.address,
                 stored_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
                 additional_authorization: None,
@@ -1195,6 +1204,7 @@ impl Relay {
                     // fee_token should have been set in the beginning of prepare_calls_inner if it
                     // was not provided by the user
                     fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
+                    fee_payer: request.capabilities.meta.fee_payer.unwrap_or(identity.root_eoa),
                     stored_authorization: delegation_status
                         .stored_account()
                         .map(|acc| acc.signed_authorization.clone()),
@@ -1275,7 +1285,7 @@ impl Relay {
             .await?;
 
         // If we're dealing with a PreCall do not estimate
-        let (asset_diff, context, key) = if request.capabilities.pre_call {
+        let (asset_diff, context, key, fee_payer_digest) = if request.capabilities.pre_call {
             let call = SignedCall {
                 eoa: request.from.unwrap_or_default(),
                 executionData: request.calls.abi_encode().into(),
@@ -1290,6 +1300,7 @@ impl Relay {
                     chain_id: request.chain_id,
                 }),
                 request.key.clone(),
+                None,
             )
         } else {
             // Regular flow - sender and delegation status are required
@@ -1304,6 +1315,19 @@ impl Relay {
             let (asset_diffs, quotes) =
                 self.build_quotes(&request, &identity, nonce, delegation_status).await?;
 
+            // Compute EIP-712 digest for fee_payer quote if present
+            let fee_payer_digest = quotes
+                .fee_payer_quote
+                .as_ref()
+                .map(|fp_quote| {
+                    fp_quote.intent.compute_eip712_data(
+                        self.contracts().get_versioned_orchestrator(fp_quote.orchestrator)?,
+                        fp_quote.chain_id,
+                    )
+                })
+                .transpose()?
+                .map(|(digest, _)| digest);
+
             let sig = self
                 .inner
                 .quote_signer
@@ -1315,6 +1339,7 @@ impl Relay {
                 asset_diffs,
                 PrepareCallsContext::with_quotes(quotes.into_signed(sig)),
                 identity.key.into_stored_key(),
+                fee_payer_digest,
             )
         };
 
@@ -1349,6 +1374,11 @@ impl Relay {
                     .map(|key| key.into_response())
                     .collect::<Vec<_>>(),
                 revoke_keys: request.capabilities.revoke_keys,
+                fee_payer_digest: request
+                    .capabilities
+                    .meta
+                    .fee_payer
+                    .map(|_| fee_payer_digest.unwrap_or(digest)),
                 asset_diff,
             },
             key,
@@ -1369,6 +1399,7 @@ impl Relay {
     ///
     /// Returns `Some(vec![])` if the destination chain does not require any funding from other
     /// chains.
+    #[expect(clippy::too_many_arguments)]
     #[instrument(skip(self, identity, assets))]
     async fn source_funds(
         &self,
@@ -1378,6 +1409,8 @@ impl Relay {
         destination_orchestrator: Address,
         requested_assets: Vec<(AddressOrNative, U256)>,
         total_leaves: usize,
+        destination_fee_token: Option<Address>,
+        is_sponsored: bool,
     ) -> Result<Option<Vec<FundSource>>, RelayError> {
         let mut remaining = HashMap::new();
 
@@ -1405,6 +1438,15 @@ impl Relay {
             .0
             .iter()
             .filter(|(chain, _)| **chain != destination_chain_id)
+            .filter(|(chain, _)| {
+                // If destination_fee_token is specified, only include chains where we can map it
+                destination_fee_token.is_none_or(|fee_token| {
+                    self.inner
+                        .chains
+                        .map_interop_asset(destination_chain_id, **chain, fee_token)
+                        .is_some()
+                })
+            })
             .flat_map(|(chain, assets)| assets.iter().map(|asset| (*chain, asset)))
             .fold(HashMap::new(), |mut acc, (chain, asset)| {
                 let Some(on_dst) = self
@@ -1470,8 +1512,17 @@ impl Relay {
                 cmp::Reverse(balances)
             })
             .map(|(chain, balances)| async move {
-                // todo: this might not work well for multi asset case.
-                let fee_token = balances.first().unwrap().0.address();
+                let fee_token = destination_fee_token
+                    .and_then(|destination_fee_token| {
+                        // Safe to unwrap: we filtered out chains where this mapping doesn't exist
+                        // in the sources filter above
+                        self.inner
+                            .chains
+                            .map_interop_asset(destination_chain_id, chain, destination_fee_token)
+                            .map(|mapped| mapped.address)
+                    })
+                    // todo: this might not work well for multi asset case.
+                    .unwrap_or_else(|| balances.first().unwrap().0.address());
                 // we simulate escrowing the smallest unit of the asset to get a sense of the fees
                 let funding_context = FundingIntentContext {
                     eoa: identity.root_eoa,
@@ -1532,8 +1583,9 @@ impl Relay {
                 };
 
                 // Calculate the maximum amount we can bridge to destination
+                // If fees are sponsored by a fee_payer, don't subtract escrow_cost
                 let max_take = adjust_balance_for_decimals(
-                    if fee_token == mapped.address {
+                    if !is_sponsored && fee_token == mapped.address {
                         (*balance).saturating_sub(escrow_cost)
                     } else {
                         *balance
@@ -1659,7 +1711,46 @@ impl Relay {
 
             // If we could successfuly simulate the intent without any deficits, then we can
             // just do this single chain instead.
+            // Exception: if fee_payer is set and has a deficit, create interop bundle for
+            // cross-chain fee payment
             if quote.asset_deficits.is_empty() {
+                // Check if this is a cross-chain fee payer case
+                if !quote.fee_token_deficit.is_zero() && !quote.intent.payer().is_zero() {
+                    let (fee_payer_asset_diffs, fee_payer_quote) = self
+                        .build_fee_payer_quote(
+                            std::slice::from_ref(quote),
+                            quote.intent.payer(),
+                            request.capabilities.meta.fee_token.unwrap_or_default(),
+                        )
+                        .await?
+                        .ok_or_else(|| {
+                            QuoteError::InsufficientFeePayerBalance(quote.intent.payer())
+                        })?;
+                    debug!(
+                        eoa = %identity.root_eoa,
+                        chain_id = %request.chain_id,
+                        fee_payer = %quote.intent.payer(),
+                        fee_deficit = %quote.fee_token_deficit,
+                        "Creating interop bundle for cross-chain fee payer"
+                    );
+
+                    // Return quotes with fee_payer quote attached
+                    let (mut all_asset_diffs, mut quotes) = quote_result;
+                    all_asset_diffs.merge(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+                    quotes.fee_payer_quote = Some(fee_payer_quote);
+
+                    // Replace user intent to not include payer and payment amount, since it's payed
+                    // by the fee_payer in another chain.
+                    quotes.quotes[0].intent = quotes.quotes[0]
+                        .intent
+                        .clone()
+                        .with_payer(Address::ZERO)
+                        .with_total_payment_max_amount(U256::ZERO);
+                    quotes.quotes[0].fee_token_deficit = U256::ZERO;
+
+                    return Ok((all_asset_diffs, quotes));
+                }
+
                 debug!(
                     eoa = %identity.root_eoa,
                     chain_id = %request.chain_id,
@@ -1672,24 +1763,28 @@ impl Relay {
 
             let mut deficits = quote.asset_deficits.0.clone();
             // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
-            deficits.retain_mut(|deficit| {
-                if Some(deficit.address.unwrap_or_default()) != request.capabilities.meta.fee_token
-                {
-                    return true;
-                }
+            // Only do this if there's no fee_payer, since fee_token_deficit is excluded.
+            if request.capabilities.meta.fee_payer.is_none() {
+                deficits.retain_mut(|deficit| {
+                    if Some(deficit.address.unwrap_or_default())
+                        != request.capabilities.meta.fee_token
+                    {
+                        return true;
+                    }
 
-                deficit.required =
-                    deficit.required.saturating_sub(quote.intent.total_payment_max_amount());
-                deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
+                    deficit.required =
+                        deficit.required.saturating_sub(quote.intent.total_payment_max_amount());
+                    deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
 
-                // If the only deficit is the fee token deficit, we can keep it and handle
-                // it as an interop intent requiring zero of the feeToken plus the fee.
-                if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
-                    true
-                } else {
-                    !deficit.deficit.is_zero()
-                }
-            });
+                    // If the only deficit is the fee token deficit, we can keep it and handle
+                    // it as an interop intent requiring zero of the feeToken plus the fee.
+                    if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
+                        true
+                    } else {
+                        !deficit.deficit.is_zero()
+                    }
+                });
+            }
 
             let mut requested_assets = Vec::new();
 
@@ -1760,9 +1855,18 @@ impl Relay {
         //
         // Note: We execute it as a multichain output, but without fund sources. The assumption here
         // is that the simulator will transfer the requested assets.
+        let request_for_multichain = if request.capabilities.meta.fee_payer.is_some() {
+            // We execute without the interop request without a fee payer, even when specified,
+            // because its payment will be done in its own quote/intent preceding the interop
+            // bundle.
+            request.without_fee_payer()
+        } else {
+            request.clone()
+        };
+
         let (_, mut output_quote) = self
             .build_intent(
-                request,
+                &request_for_multichain,
                 identity,
                 delegation_status,
                 nonce,
@@ -1795,8 +1899,10 @@ impl Relay {
             }
         }
 
-        // Include the fee token into the filter if we will need to source the fee as well.
-        if !output_quote.fee_token_deficit.is_zero()
+        // Include the fee token into the filter if we will need to source the fee from the user as
+        // well.
+        if request.capabilities.meta.fee_payer.is_none()
+            && !output_quote.fee_token_deficit.is_zero()
             && !requested_with_balance.iter().any(|(asset, _)| asset.address == fee_token)
         {
             for (chain, asset) in
@@ -1846,13 +1952,17 @@ impl Relay {
                 .map(|(asset, _)| (asset.address.into(), asset.value))
                 .collect::<Vec<_>>();
 
-            if let Some(entry) =
-                requested_funds.iter_mut().find(|(address, _)| address.address() == fee_token)
-            {
-                entry.1 += output_quote.intent.total_payment_max_amount();
-            } else if !output_quote.fee_token_deficit.is_zero() {
-                requested_funds
-                    .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
+            // If the user is the one paying for fees, we need to add that fee cost to the requested
+            // funds request
+            if request.capabilities.meta.fee_payer.is_none() {
+                if let Some(entry) =
+                    requested_funds.iter_mut().find(|(address, _)| address.address() == fee_token)
+                {
+                    entry.1 += output_quote.intent.total_payment_max_amount();
+                } else if !output_quote.fee_token_deficit.is_zero() {
+                    requested_funds
+                        .push((fee_token.into(), output_quote.intent.total_payment_max_amount()));
+                }
             }
 
             let Some(funding_chains) = self
@@ -1863,6 +1973,15 @@ impl Relay {
                     output_quote.orchestrator,
                     requested_funds.clone(),
                     num_funding_chains + 1,
+                    // If fee_payer is specified, use the chosen fee_token
+                    //
+                    // CAREFUL: build_fee_payer_quote depends on the following fee_token being the
+                    // same across chains for now.
+                    // TODO: instead, just use any and then calculate total fee on fee_token
+                    // through the usd sum.
+                    request.capabilities.meta.fee_payer.and(Some(fee_token)),
+                    // Fees are sponsored if fee_payer is present
+                    request.capabilities.meta.fee_payer.is_some(),
                 )
                 .await?
             else {
@@ -1911,8 +2030,8 @@ impl Relay {
                 .into_iter()
                 .collect::<Vec<_>>();
 
-            // `sourced_funds` now also includes fees, so make sure the funder has enough balance to
-            // transfer.
+            // `sourced_funds` now also potentially includes fees if paid by the user, so make sure
+            // the funder has enough balance to transfer.
             for (token, amount) in &fund_transfers {
                 let funder_balance_on_dst =
                     funder_assets.balance_on_chain(request.chain_id, (*token).into());
@@ -1921,10 +2040,9 @@ impl Relay {
                 }
             }
 
-            // Simulate multi-chain
             let (output_asset_diffs, new_quote) = self
                 .build_intent(
-                    request,
+                    &request_for_multichain,
                     identity,
                     delegation_status,
                     nonce,
@@ -1945,7 +2063,9 @@ impl Relay {
             // If `balance + sourced_funds - requested_funds - fee?` is `0`, then we've sourced
             // exactly the amount we need. If it's more, then we're overfunding a bit, which is not
             // the worst scenario, but ideally we get as close to 0 as possible.
-            if output_quote.fee_token_deficit.is_zero() {
+            if output_quote.fee_token_deficit.is_zero()
+                || request.capabilities.meta.fee_payer.is_some()
+            {
                 // Compute EIP-712 digest (settlement_id)
                 let (output_intent_digest, _) = output_quote.intent.compute_eip712_data(
                     self.contracts().get_versioned_orchestrator(output_quote.orchestrator)?,
@@ -1994,6 +2114,34 @@ impl Relay {
                 all_quotes.push(output_quote);
                 all_asset_diffs.push(request.chain_id, output_asset_diffs);
 
+                // Handle fee_payer if specified
+                let fee_payer_quote = if let Some(fee_payer) = request.capabilities.meta.fee_payer {
+                    let (fee_payer_asset_diffs, fee_payer_quote) = self
+                        .build_fee_payer_quote(&all_quotes, fee_payer, fee_token)
+                        .await?
+                        .ok_or(QuoteError::InsufficientFeePayerBalance(fee_payer))?;
+
+                    all_asset_diffs.merge(fee_payer_quote.chain_id, fee_payer_asset_diffs);
+
+                    // Set all user quotes to have zero payment, since fee_payer will sponsor them
+                    for quote in &mut all_quotes {
+                        quote.intent =
+                            quote.intent.clone().with_total_payment_max_amount(U256::ZERO);
+
+                        // We simulated as if the the user would pay it, so we need to clear any
+                        // deficit here.
+                        quote.asset_deficits.remove_fee_amount(
+                            quote.intent.payment_token(),
+                            quote.fee_token_deficit,
+                        );
+                        quote.fee_token_deficit = U256::ZERO;
+                    }
+
+                    Some(fee_payer_quote)
+                } else {
+                    None
+                };
+
                 return Ok((
                     all_asset_diffs,
                     Quotes {
@@ -2006,6 +2154,7 @@ impl Relay {
                         // smth like Quotes::new(quotes, ttl).with_merkle_payload(..) or
                         // Quotes::multichain(quotes, ttl, root)
                         multi_chain_root: None,
+                        fee_payer_quote,
                     }
                     .with_merkle_payload(self.contracts())?,
                 ));
@@ -2081,6 +2230,7 @@ impl Relay {
                     .checked_add(self.inner.quote_config.ttl)
                     .expect("should never overflow"),
                 multi_chain_root: None,
+                fee_payer_quote: None,
             },
         ))
     }
@@ -2171,11 +2321,17 @@ impl Relay {
         let dst_idx = quotes.ty().quotes.len() - 1;
 
         let root = intents.root()?;
-        let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
-            let proof = intents.get_proof_immutable(idx)?;
-            let merkle_sig = (proof, root, &signature).abi_encode_params().into();
+        let has_many_user_quotes = quotes.ty().quotes.len() > 1;
 
-            self.prepare_tx(bundle_id, quote.clone(), capabilities.clone(), merkle_sig)
+        let tx_futures = quotes.ty().quotes.iter().enumerate().map(async |(idx, quote)| {
+            let signature = if has_many_user_quotes {
+                let proof = intents.get_proof_immutable(idx)?;
+                (proof, root, &signature).abi_encode_params().into()
+            } else {
+                signature.clone()
+            };
+
+            self.prepare_tx(bundle_id, quote.clone(), capabilities.clone(), signature)
                 .await
                 .map(|tx| (idx, tx))
                 .map_err(|e| RelayError::InternalError(e.into()))
@@ -2188,6 +2344,20 @@ impl Relay {
             } else {
                 bundle.append_src(tx);
             }
+        }
+
+        // Extract and build fee_payer transaction if present
+        if let Some(fee_payer_quote) = quotes.ty().fee_payer_quote.as_ref() {
+            bundle.fee_payer_tx = Some(
+                self.prepare_tx(
+                    bundle_id,
+                    (**fee_payer_quote).clone(),
+                    Default::default(),
+                    capabilities.fee_signature.clone(),
+                )
+                .await
+                .map_err(|e| RelayError::InternalError(e.into()))?,
+            );
         }
 
         Ok(bundle)
@@ -2207,6 +2377,162 @@ impl Relay {
         chain: u64,
     ) -> Result<DelegationStatus, RelayError> {
         Account::new(*eoa, self.provider(chain)?).delegation_status(&self.inner.storage).await
+    }
+
+    /// Builds a fee payer quote for covering user transaction fees.
+    ///
+    /// This method finds the best chain where the fee payer has sufficient balance,
+    /// creates a transfer intent, and returns the resulting quote.
+    async fn build_fee_payer_quote(
+        &self,
+        all_quotes: &[Quote],
+        fee_payer: Address,
+        fee_token: Address,
+    ) -> RpcResult<Option<(ChainAssetDiffs, Box<Quote>)>> {
+        // Find the maximum decimals across all quotes
+        let max_decimals = all_quotes.iter().map(|q| q.payment_token_decimals).max().unwrap_or(18);
+
+        // Calculate total user fees by normalizing all payment amounts to max_decimals and summing.
+        //
+        // Assumes that we are dealing with the same UID in all quotes.
+        let total_user_fees: U256 = all_quotes
+            .iter()
+            .map(|q| {
+                let fee = q.intent.total_payment_max_amount();
+                let decimals = q.payment_token_decimals;
+                adjust_balance_for_decimals(fee, decimals, max_decimals)
+            })
+            .sum();
+
+        // Get the AssetUid for the fee_token on the last quote's chain
+        let last_quote = all_quotes.last().ok_or_else(|| RelayError::internal_msg("no quotes"))?;
+        let (fee_token_uid, _) =
+            self.inner.chains.fee_token(last_quote.chain_id, fee_token).ok_or(
+                RelayError::UnsupportedAsset { chain: last_quote.chain_id, asset: fee_token },
+            )?;
+
+        // Find all chains where this asset exists as a fee token, and cache the addresses
+        let fee_token_addresses: HashMap<ChainId, Address> = self
+            .inner
+            .chains
+            .chains_iter()
+            .filter_map(|chain| {
+                let address = self.inner.chains.fee_tokens(chain.id()).and_then(|tokens| {
+                    tokens
+                        .iter()
+                        .find(|(uid, _)| *uid == *fee_token_uid)
+                        .map(|(_, desc)| desc.address)
+                })?;
+                Some((chain.id(), address))
+            })
+            .collect();
+
+        // Verify all quotes use the same fee token UID
+        for quote in &all_quotes[..all_quotes.len().saturating_sub(1)] {
+            let expected_address = fee_token_addresses.get(&quote.chain_id).ok_or_else(|| {
+                RelayError::UnsupportedAsset {
+                    chain: quote.chain_id,
+                    asset: quote.intent.payment_token(),
+                }
+            })?;
+            if quote.intent.payment_token() != *expected_address {
+                return Err(RelayError::internal_msg(
+                    "all quotes must use the same fee token asset UID",
+                )
+                .into());
+            }
+        }
+
+        let fee_payer_all_assets = self
+            .get_assets(GetAssetsParameters::for_assets_on_chains(
+                fee_payer,
+                fee_token_addresses
+                    .iter()
+                    .map(|(chain_id, addr)| (*chain_id, vec![*addr]))
+                    .collect(),
+            ))
+            .await?;
+
+        // Find chain with highest normalized balance that meets the threshold
+        let required_balance = total_user_fees.saturating_mul(U256::from(2));
+        let source_chain = fee_payer_all_assets
+            .0
+            .iter()
+            .filter_map(|(chain_id, assets)| {
+                let fee_token_address = *fee_token_addresses.get(chain_id)?;
+
+                // Find the asset balance for this token on this chain
+                let asset = assets.iter().find(|a| a.address.address() == fee_token_address)?;
+                let (_, token_desc) = self.inner.chains.fee_token(*chain_id, fee_token_address)?;
+                let normalized =
+                    adjust_balance_for_decimals(asset.balance, token_desc.decimals, max_decimals);
+                (normalized >= required_balance).then_some((*chain_id, normalized))
+            })
+            .max_by_key(|(_, balance)| *balance)
+            .map(|(chain_id, _)| chain_id);
+
+        let Some(source_chain) = source_chain else {
+            return Ok(None);
+        };
+
+        // Get fee_payer's delegation status on the source chain
+        let fee_payer_delegation_status = self.delegation_status(&fee_payer, source_chain).await?;
+
+        // Create identity parameters for fee_payer (use root EOA key for signing)
+        let fee_payer_identity = IdentityParameters::new(None, fee_payer);
+
+        // Get the payment recipient from the output quote (last quote in all_quotes)
+        let output_quote = all_quotes.last().expect("all_quotes should contain at least one quote");
+        let fee_recipient = output_quote.intent.payment_recipient();
+
+        // Get the correct address for the fee_token on the source chain (we already computed this)
+        let source_fee_token_address = *fee_token_addresses
+            .get(&source_chain)
+            .ok_or_else(|| RelayError::Quote(QuoteError::UnsupportedFeeToken(fee_token)))?;
+
+        // Get the chosen chain's decimals and denormalize total_user_fees
+        let (_, token_desc) =
+            self.inner
+                .chains
+                .fee_token(source_chain, source_fee_token_address)
+                .ok_or_else(|| RelayError::Quote(QuoteError::UnsupportedFeeToken(fee_token)))?;
+
+        // Create a intent for fee_payer with the transfer call
+        let fee_payer_request = PrepareCallsParameters {
+            chain_id: source_chain,
+            calls: vec![Call::transfer_fee(
+                source_fee_token_address,
+                fee_recipient,
+                adjust_balance_for_decimals(total_user_fees, max_decimals, token_desc.decimals),
+            )],
+            from: Some(fee_payer),
+            capabilities: PrepareCallsCapabilities {
+                meta: Meta {
+                    fee_token: Some(source_fee_token_address),
+                    fee_payer: None,
+                    nonce: None,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Use a random nonce for fee_payer to support concurrent sponsorships
+        let fee_payer_nonce = Account::random_nonce();
+
+        // Build the fee_payer intent as a single-chain intent (not part of the merkle tree)
+        let (fee_payer_asset_diffs, fee_payer_quote) = self
+            .build_intent(
+                &fee_payer_request,
+                &fee_payer_identity,
+                &fee_payer_delegation_status,
+                fee_payer_nonce,
+                IntentKind::Single,
+                false,
+            )
+            .await?;
+
+        Ok(Some((fee_payer_asset_diffs, Box::new(fee_payer_quote))))
     }
 }
 

@@ -75,6 +75,8 @@ pub struct PartialIntent {
 pub struct FeeEstimationContext {
     /// The token to use for fee payment.
     pub fee_token: Address,
+    /// Address that pays fees (either specified or the EOA).
+    pub fee_payer: Address,
     /// Optional stored authorization for EIP-7702 delegation.
     pub stored_authorization: Option<SignedAuthorization>,
     /// Additional authorization made in the intent - this is used when we want to auto delegate
