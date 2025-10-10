@@ -756,7 +756,7 @@ impl StorageApi for InMemoryStorage {
             let v = entry.value();
             if v.bundle().dst_txs.iter().any(|tx| tx.kind.is_intent_for(address)) {
                 filtered.push(BundleHistoryEntry::Interop {
-                    bundle: v.clone().into_bundle_with_status(),
+                    bundle: Box::new(v.clone().into_bundle_with_status()),
                     timestamp: v.created_at,
                 });
             }
@@ -767,7 +767,7 @@ impl StorageApi for InMemoryStorage {
             let v = entry.value();
             if v.bundle().dst_txs.iter().any(|tx| tx.kind.is_intent_for(address)) {
                 filtered.push(BundleHistoryEntry::Interop {
-                    bundle: v.clone().into_bundle_with_status(),
+                    bundle: Box::new(v.clone().into_bundle_with_status()),
                     timestamp: v.created_at,
                 });
             }

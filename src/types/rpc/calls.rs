@@ -9,8 +9,7 @@ use crate::{
     storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY,
-        Erc20Slots, Key, KeyType, MULTICHAIN_NONCE_PREFIX_U192, Quote, SignedCall, SignedCalls,
-        SignedQuotes, VersionedContracts,
+        Erc20Slots, Key, KeyType, Quote, SignedCall, SignedCalls, SignedQuotes, VersionedContracts,
     },
 };
 use alloy::{

@@ -31,7 +31,7 @@ pub enum BundleHistoryEntry {
     /// Multi-chain bundle
     Interop {
         /// The bundle with status.
-        bundle: BundleWithStatus,
+        bundle: Box<BundleWithStatus>,
         /// The timestamp when the bundle was created (Unix timestamp in seconds).
         timestamp: u64,
     },

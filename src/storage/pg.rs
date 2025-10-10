@@ -1689,7 +1689,7 @@ impl StorageApi for PgStorage {
                         .map_err(|e| eyre::eyre!("Failed to get BundleStatus: {}", e))?;
 
                     entries.push(BundleHistoryEntry::Interop {
-                        bundle: BundleWithStatus { bundle, status },
+                        bundle: Box::new(BundleWithStatus { bundle, status }),
                         timestamp,
                     });
                 }
