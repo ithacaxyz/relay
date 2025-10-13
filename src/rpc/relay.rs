@@ -3139,12 +3139,12 @@ impl RelayApiServer for Relay {
                         self.inner.storage.read_transaction_statuses(&all_tx_ids).await?;
 
                     let mut transactions = Vec::with_capacity(tx_statuses.len());
-                    for tx_status_opt in tx_statuses {
+                    for tx_status_opt in &tx_statuses {
                         if let Some((chain_id, tx_status)) = tx_status_opt
                             && let Some(tx_hash) = tx_status.tx_hash()
                         {
                             transactions.push(CallHistoryTransaction {
-                                chain_id,
+                                chain_id: *chain_id,
                                 transaction_hash: tx_hash,
                             });
                         }
@@ -3161,8 +3161,22 @@ impl RelayApiServer for Relay {
                         })
                         .collect::<Vec<_>>();
 
-                    // TODO: Implement asset diff
-                    let asset_diff = AssetDiffResponse::default();
+                    // Retrieve stored asset diffs for this bundle
+                    let mut asset_diff = AssetDiffResponse::default();
+                    for (diffs_opt, status_opt) in self
+                        .inner
+                        .storage
+                        .read_asset_diffs(all_tx_ids)
+                        .await?
+                        .into_iter()
+                        .zip(&tx_statuses)
+                    {
+                        if let Some(diffs) = diffs_opt
+                            && let Some((chain_id, _)) = status_opt
+                        {
+                            asset_diff.asset_diffs.entry(*chain_id).or_insert(diffs);
+                        }
+                    }
 
                     CallHistoryEntry {
                         id: bundle.id,
@@ -3204,11 +3218,16 @@ impl RelayApiServer for Relay {
                         })
                         .unwrap_or_default();
 
-                    // TODO: Implement asset diff
-                    let asset_diff = AssetDiffResponse::default();
-
                     // Get tx_id from bundle_transactions table
                     let tx_ids = self.inner.storage.get_bundle_transactions(bundle_id).await?;
+
+                    // Retrieve stored asset diffs for this bundle
+                    let stored_diffs = self.inner.storage.read_asset_diffs(tx_ids.clone()).await?;
+                    let mut asset_diff = AssetDiffResponse::default();
+                    for diffs in stored_diffs.into_iter().flatten() {
+                        asset_diff.asset_diffs.entry(chain_id).or_insert(diffs);
+                    }
+
                     let call_status = if let Some(&tx_id) = tx_ids.first() {
                         self.inner
                             .storage
