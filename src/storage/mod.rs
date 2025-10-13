@@ -18,7 +18,7 @@ use crate::{
     },
     storage::api::OnrampVerificationStatus,
     transactions::{PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId},
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    types::{AssetDiffs, CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -421,5 +421,13 @@ impl StorageApi for RelayStorage {
 
     async fn get_bundle_count_by_address(&self, address: Address) -> api::Result<u64> {
         self.inner.get_bundle_count_by_address(address).await
+    }
+
+    async fn store_asset_diffs(&self, tx_id: TxId, asset_diffs: &AssetDiffs) -> api::Result<()> {
+        self.inner.store_asset_diffs(tx_id, asset_diffs).await
+    }
+
+    async fn read_asset_diffs(&self, tx_ids: Vec<TxId>) -> api::Result<Vec<Option<AssetDiffs>>> {
+        self.inner.read_asset_diffs(tx_ids).await
     }
 }

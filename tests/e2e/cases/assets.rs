@@ -541,3 +541,58 @@ async fn asset_deficits() -> eyre::Result<()> {
 
     Ok(())
 }
+
+/// Concise test: Verify asset diffs are stored for a simple ERC20 transfer.
+#[tokio::test(flavor = "multi_thread")]
+async fn store_asset_diffs_erc20() -> eyre::Result<()> {
+    use relay::{storage::StorageApi, transactions::TxId, types::AssetDiffs};
+
+    let env = Environment::setup().await?;
+    let admin_key = KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap();
+    upgrade_account_eagerly(&env, &[admin_key.to_authorized()], &admin_key, AuthKind::Auth).await?;
+
+    mint_erc20s(&[env.erc20s[0]], &[env.eoa.address()], env.provider()).await?;
+
+    let params = PrepareCallsParameters {
+        from: Some(env.eoa.address()),
+        calls: vec![Call::transfer(env.erc20s[0], Address::random(), U256::from(100))],
+        chain_id: env.chain_id(),
+        capabilities: PrepareCallsCapabilities {
+            meta: Meta { fee_payer: None, fee_token: Some(Address::ZERO), nonce: None },
+            ..Default::default()
+        },
+        state_overrides: Default::default(),
+        balance_overrides: Default::default(),
+        key: Some(admin_key.to_call_key()),
+    };
+
+    let response = env.relay_endpoint.prepare_calls(params).await?;
+    let bundle_id = send_prepared_calls(
+        &env,
+        &admin_key,
+        admin_key.sign_payload_hash(response.digest).await?,
+        response.context,
+    )
+    .await?;
+
+    // Wait for confirmation and retrieve stored asset diffs
+    let status = await_calls_status(&env, bundle_id).await?;
+    assert!(status.status.is_confirmed());
+
+    let tx_ids: Vec<TxId> =
+        env.relay_handle.storage.get_bundle_transactions(bundle_id).await.unwrap();
+    let stored_diffs: Vec<Option<AssetDiffs>> =
+        env.relay_handle.storage.read_asset_diffs(tx_ids).await.unwrap();
+
+    assert_eq!(stored_diffs.len(), 1);
+    let stored = stored_diffs[0].as_ref().expect("Should have stored diffs");
+
+    // Verify EOA has outgoing diff for ERC20
+    let eoa_diffs = stored.0.iter().find(|(addr, _)| *addr == env.eoa.address()).unwrap();
+    let erc20_diff = eoa_diffs.1.iter().find(|d| d.address == Some(env.erc20s[0])).unwrap();
+
+    assert!(erc20_diff.direction.is_outgoing());
+    assert_eq!(erc20_diff.value, U256::from(100));
+
+    Ok(())
+}

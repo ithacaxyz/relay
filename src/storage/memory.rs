@@ -16,7 +16,7 @@ use crate::{
         TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    types::{AssetDiffs, CreatableAccount, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -102,6 +102,7 @@ pub struct InMemoryStorage {
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
     pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
     precalls: DashMap<(Address, ChainId, U256), SignedCall>,
+    asset_diffs: DashMap<TxId, AssetDiffs>,
 }
 
 impl InMemoryStorage {
@@ -852,6 +853,18 @@ impl StorageApi for InMemoryStorage {
             .count();
 
         Ok((multichain_count + singlechain_count) as u64)
+    }
+
+    async fn store_asset_diffs(&self, tx_id: TxId, asset_diffs: &AssetDiffs) -> Result<()> {
+        self.asset_diffs.insert(tx_id, asset_diffs.clone());
+        Ok(())
+    }
+
+    async fn read_asset_diffs(&self, tx_ids: Vec<TxId>) -> Result<Vec<Option<AssetDiffs>>> {
+        Ok(tx_ids
+            .into_iter()
+            .map(|tx_id| self.asset_diffs.get(&tx_id).map(|v| v.clone()))
+            .collect())
     }
 }
 

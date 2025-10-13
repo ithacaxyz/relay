@@ -1,13 +1,25 @@
+//! Asset diff tracking for transaction simulation and execution.
+
 use crate::{
+    asset::{self, AssetInfoServiceHandle},
     chains::Chains,
     constants::SIMULATEV1_NATIVE_ADDRESS,
     error::{AssetError, RelayError},
     price::{PriceOracle, calculate_usd_value},
-    types::{AssetMetadata, AssetPrice, AssetType, IERC20, IERC721, Quote},
+    types::{
+        AssetMetadata, AssetPrice, AssetType, IERC20, IERC20::IERC20Events, IERC721,
+        IERC721::IERC721Events, Quote,
+    },
 };
-use alloy::primitives::{
-    Address, ChainId, U256,
-    map::{HashMap, HashSet},
+use alloy::{
+    primitives::{
+        Address, B256, ChainId, U256,
+        map::{HashMap, HashSet},
+    },
+    providers::{Provider, ext::DebugApi},
+    rpc::types::trace::geth::{CallConfig, GethDebugTracingOptions},
+    sol_types::SolEventInterface,
+    transports::TransportErrorKind,
 };
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -22,6 +34,40 @@ impl AssetDiffs {
     /// Returns a [`AssetDiffBuilder`] that can build [`AssetDiffs`].
     pub fn builder() -> AssetDiffsBuilder {
         AssetDiffsBuilder::default()
+    }
+
+    /// Extracts asset diffs from a confirmed transaction's trace.
+    ///
+    /// Uses `debug_traceTransaction` to analyze ERC20/ERC721 transfer events
+    /// and builds asset diffs with complete metadata.
+    pub async fn from_trace_transaction<P: Provider>(
+        provider: &P,
+        tx_hash: B256,
+        asset_info: &AssetInfoServiceHandle,
+    ) -> Result<Self, RelayError> {
+        let trace_options = GethDebugTracingOptions::call_tracer(CallConfig::default().with_log());
+
+        let trace = provider.debug_trace_transaction(tx_hash, trace_options).await?;
+        let call_frame = trace.try_into_call_frame().map_err(|e| {
+            TransportErrorKind::custom_str(&format!("Failed to extract call frame from trace: {e}"))
+        })?;
+
+        // Collect logs from the call frame
+        let (_, logs) = crate::types::simulator::collect_calls_and_logs_from_frame(call_frame);
+
+        // Build asset diffs from logs
+        let builder = AssetDiffsBuilder::from_logs(&logs);
+
+        // Fetch metadata for seen assets
+        let seen_assets: Vec<_> = builder.seen_assets().copied().collect();
+        let seen_nfts: Vec<_> = builder.seen_nfts().collect();
+
+        let (metadata, tokens_uris) = tokio::try_join!(
+            asset_info.get_asset_info_list(provider, seen_assets),
+            asset::fetch_nft_uris(provider, &seen_nfts)
+        )?;
+
+        Ok(builder.build(metadata, tokens_uris))
     }
 
     /// By default, asset diffs include the intent payment. This ensures it gets removed.
@@ -283,6 +329,30 @@ struct AccountChanges {
 }
 
 impl AssetDiffsBuilder {
+    /// Creates an `AssetDiffsBuilder` from logs by decoding ERC20 and ERC721 Transfer events.
+    pub fn from_logs(logs: &[alloy::primitives::Log]) -> Self {
+        let mut builder = Self::default();
+        for log in logs {
+            // ERC-20
+            if let Some((asset, transfer)) =
+                IERC20Events::decode_log(log).ok().map(|ev| match ev.data {
+                    IERC20Events::Transfer(t) => (Asset::from(log.address), t),
+                })
+            {
+                builder.record_erc20(asset, transfer);
+            }
+            // ERC-721
+            else if let Some((asset, transfer)) =
+                IERC721Events::decode_log(log).ok().map(|ev| match ev.data {
+                    IERC721Events::Transfer(t) => (Asset::from(log.address), t),
+                })
+            {
+                builder.record_erc721(asset, transfer);
+            }
+        }
+        builder
+    }
+
     /// Returns an iterator over seen assets.
     pub fn seen_assets(&self) -> impl Iterator<Item = &Asset> {
         self.seen_assets.iter()
