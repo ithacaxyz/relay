@@ -31,7 +31,6 @@ use alloy::{
     sol_types::SolCall,
     transports::{RpcError, TransportErrorKind, TransportResult},
 };
-use alloy_chains::Chain;
 use chrono::Utc;
 use eyre::{OptionExt, WrapErr};
 use futures_util::{
