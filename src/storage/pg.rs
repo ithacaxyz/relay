@@ -26,7 +26,9 @@ use crate::{
         TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    types::{
+        AssetUid, CreatableAccount, HistoricalPrice, HistoricalPriceKey, SignedCall, rpc::BundleId,
+    },
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -1768,5 +1770,127 @@ impl StorageApi for PgStorage {
 
         let total: i64 = row.get("total");
         Ok(total as u64)
+    }
+
+    #[instrument(skip_all)]
+    async fn store_historical_usd_prices(&self, prices: Vec<HistoricalPrice>) -> Result<()> {
+        if prices.is_empty() {
+            return Ok(());
+        }
+
+        let asset_uids: Vec<String> =
+            prices.iter().map(|p| p.asset_uid.as_str().to_string()).collect();
+        let timestamps: Vec<i64> = prices.iter().map(|p| p.timestamp as i64).collect();
+        let usd_prices: Vec<f64> = prices.iter().map(|p| p.usd_price).collect();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO historical_usd_prices (asset_uid, timestamp, usd_price)
+            SELECT * FROM UNNEST($1::text[], $2::bigint[], $3::double precision[])
+            ON CONFLICT (asset_uid, timestamp) DO UPDATE SET usd_price = EXCLUDED.usd_price
+            "#,
+            &asset_uids[..],
+            &timestamps[..],
+            &usd_prices[..]
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn read_historical_usd_prices(
+        &self,
+        queries: Vec<HistoricalPriceKey>,
+    ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>> {
+        if queries.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let asset_uids: Vec<String> =
+            queries.iter().map(|q| q.asset_uid.as_str().to_string()).collect();
+        let timestamps: Vec<i64> = queries.iter().map(|q| q.timestamp as i64).collect();
+
+        // Try exact matches first
+        let rows = sqlx::query!(
+            r#"
+            SELECT asset_uid, timestamp, usd_price
+            FROM historical_usd_prices
+            WHERE (asset_uid, timestamp) IN (
+                SELECT * FROM UNNEST($1::text[], $2::bigint[])
+            )
+            "#,
+            &asset_uids[..],
+            &timestamps[..]
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let key = HistoricalPriceKey {
+                asset_uid: AssetUid::new(row.asset_uid.clone()),
+                timestamp: row.timestamp as u64,
+            };
+            result.insert(key, (row.timestamp as u64, row.usd_price));
+        }
+
+        // For queries that didn't get exact matches, try approximate lookup (±5 minutes)
+        let missing_queries: Vec<_> =
+            queries.into_iter().filter(|q| !result.contains_key(q)).collect();
+
+        if !missing_queries.is_empty() {
+            let missing_asset_uids: Vec<String> =
+                missing_queries.iter().map(|q| q.asset_uid.as_str().to_string()).collect();
+            let missing_timestamps: Vec<i64> =
+                missing_queries.iter().map(|q| q.timestamp as i64).collect();
+
+            // Use LATERAL JOIN to find closest timestamp within ±5 minutes for each query
+            let approx_rows = sqlx::query!(
+                r#"
+                SELECT
+                    q.asset_uid,
+                    q.requested_timestamp,
+                    h.timestamp,
+                    h.usd_price
+                FROM UNNEST($1::text[], $2::bigint[]) AS q(asset_uid, requested_timestamp)
+                LEFT JOIN LATERAL (
+                    SELECT timestamp, usd_price
+                    FROM historical_usd_prices
+                    WHERE asset_uid = q.asset_uid
+                      AND timestamp BETWEEN q.requested_timestamp - 300
+                                        AND q.requested_timestamp + 300
+                    ORDER BY ABS(timestamp - q.requested_timestamp)
+                    LIMIT 1
+                ) h ON true
+                WHERE h.timestamp IS NOT NULL
+                "#,
+                &missing_asset_uids[..],
+                &missing_timestamps[..]
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(eyre::Error::from)?;
+
+            for row in approx_rows {
+                // SAFETY: WHERE h.timestamp IS NOT NULL ensures rows from LATERAL join exist
+                // q.asset_uid and q.requested_timestamp are from UNNEST so they're nullable
+                // h.timestamp and h.usd_price are from the lateral join and filtered by WHERE
+                // clause
+                let Some(asset_uid) = row.asset_uid else { continue };
+                let Some(requested_timestamp) = row.requested_timestamp else { continue };
+
+                let key = HistoricalPriceKey {
+                    asset_uid: AssetUid::new(asset_uid),
+                    timestamp: requested_timestamp as u64,
+                };
+                result.insert(key, (row.timestamp as u64, row.usd_price));
+            }
+        }
+
+        Ok(result)
     }
 }

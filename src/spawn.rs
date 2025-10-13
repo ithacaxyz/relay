@@ -161,6 +161,9 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
 
+    // Enable periodic storage of historical USD prices
+    price_oracle = price_oracle.with_storage(storage.clone());
+
     // get contract versions from chain.
     let contracts = VersionedContracts::new(
         &config,

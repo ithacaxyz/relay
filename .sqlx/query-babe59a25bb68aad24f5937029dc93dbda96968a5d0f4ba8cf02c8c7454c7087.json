@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO historical_usd_prices (asset_uid, timestamp, usd_price)\n            SELECT * FROM UNNEST($1::text[], $2::bigint[], $3::double precision[])\n            ON CONFLICT (asset_uid, timestamp) DO UPDATE SET usd_price = EXCLUDED.usd_price\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Int8Array",
+        "Float8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "babe59a25bb68aad24f5937029dc93dbda96968a5d0f4ba8cf02c8c7454c7087"
+}
