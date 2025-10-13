@@ -364,7 +364,8 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-        // Retry logic needed on Polygon/Flashblocks since it sometimes executes eth_call with old state.
+        // Retry logic needed on Polygon/Flashblocks since it sometimes executes eth_call with old
+        // state.
         let mut attempt = 0;
         loop {
             let result =
