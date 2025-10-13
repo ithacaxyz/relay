@@ -8,7 +8,7 @@ use crate::e2e::{
 use alloy::{
     eips::eip7702::constants::EIP7702_DELEGATION_DESIGNATOR,
     primitives::{Address, B256, Bytes, U64, U256},
-    providers::{Provider, ext::AnvilApi},
+    providers::{PendingTransactionBuilder, Provider, ext::AnvilApi},
     rpc::types::TransactionRequest,
     sol_types::{SolCall, SolValue},
 };
@@ -22,7 +22,7 @@ use relay::{
         rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
     },
 };
-use std::ops::Div;
+use std::{ops::Div, time::Duration};
 
 /// Ensures unsupported delegation implementations and proxies are caught.
 #[tokio::test(flavor = "multi_thread")]
@@ -121,6 +121,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Change the proxy before sending the quote and expect it to fail offchain.
     {
+        tokio::time::sleep(Duration::from_secs(5)).await;
         env.provider()
             .anvil_set_code(
                 env.eoa.address(),
@@ -152,6 +153,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Change the delegation proxy bytecodecode and prepare_calls & send_prepared_calls should fail.
     {
+        tokio::time::sleep(Duration::from_secs(5)).await;
         let mut code = expected_proxy_code.to_vec();
         code[2] = code[2].wrapping_add(1);
         env.provider()
@@ -194,6 +196,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Upgrade implementation to another one and expect it to fail.
     {
+        tokio::time::sleep(Duration::from_secs(5)).await;
         env.provider().anvil_set_code(env.eoa.address(), expected_eoa_code).await?;
         upgrade_delegation(&env, another_impl).await;
 
@@ -223,6 +226,7 @@ async fn catch_invalid_delegation() -> eyre::Result<()> {
 
     // Upgrade implementation to original and expect it to succeed sending the intent.
     {
+        tokio::time::sleep(Duration::from_secs(5)).await;
         upgrade_delegation(
             &env,
             caps.chain(env.chain_id()).contracts.delegation_implementation.address,
@@ -258,8 +262,14 @@ pub async fn upgrade_delegation(env: &Environment, address: Address) {
                 .into(),
         )
         .gas_limit(100_000);
-    let _tx_hash: B256 =
+    let tx_hash: B256 =
         env.provider().client().request("eth_sendTransaction", (tx,)).await.unwrap();
+
+    // Wait for transaction to be confirmed
+    PendingTransactionBuilder::new(env.provider().root().clone(), tx_hash)
+        .get_receipt()
+        .await
+        .unwrap();
 }
 
 /// Ensures upgradeProxyAccount can be called as a precall.
