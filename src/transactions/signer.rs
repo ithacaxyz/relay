@@ -364,8 +364,7 @@ impl Signer {
         request.from = Some(self.address());
 
         // Try eth_call before committing to send the actual transaction
-        // Retry logic needed on Polygon since it sometimes executes eth_call with old state.
-        let is_polygon = Chain::from_id(self.chain_id).is_polygon();
+        // Retry logic needed on Polygon/Flashblocks since it sometimes executes eth_call with old state.
         let mut attempt = 0;
         loop {
             let result =
@@ -384,7 +383,7 @@ impl Signer {
 
             if result.is_ok() {
                 break;
-            } else if is_polygon && attempt < 4 {
+            } else if attempt < 4 {
                 attempt += 1;
                 self.metrics.simulation_retries.increment(1);
                 debug!(error = ?result, ?request, chain_id = self.chain_id, "transaction simulation failed retrying... (attempt {}/5)", attempt);
