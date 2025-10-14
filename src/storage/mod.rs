@@ -487,7 +487,10 @@ mod tests {
                 Some((expected_ts, expected_price)) => {
                     assert_eq!(results.len(), 1);
                     let (ts, price) = results
-                        .get(&HistoricalPriceKey { asset_uid: eth_uid.clone(), timestamp: query_ts })
+                        .get(&HistoricalPriceKey {
+                            asset_uid: eth_uid.clone(),
+                            timestamp: query_ts,
+                        })
                         .unwrap();
                     assert_eq!(*ts, expected_ts);
                     assert_eq!(*price, expected_price);
