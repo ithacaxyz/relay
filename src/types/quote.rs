@@ -158,6 +158,9 @@ impl Quote {
         if let Some(address) = self.authorization_address {
             hasher.update(address);
         }
+        if let Some(auth) = &self.additional_authorization {
+            hasher.update(auth.signature_hash());
+        }
         hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
         hasher.update([self.has_deficits() as u8]);
