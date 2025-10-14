@@ -75,14 +75,18 @@ pub async fn try_spawn_with_args(args: Args, config_path: &Path) -> eyre::Result
         config.secrets.funder_key = std::env::var("RELAY_FUNDER_SIGNER_KEY")
             .wrap_err("Missing environment variable RELAY_FUNDER_SIGNER_KEY")?;
         config.database_url = std::env::var("RELAY_DB_URL").ok();
+
+        if let (Ok(account_sid), Ok(auth_token), Ok(verify_service_sid)) = (
+            std::env::var("TWILIO_ACCOUNT_SID"),
+            std::env::var("TWILIO_AUTH_TOKEN"),
+            std::env::var("TWILIO_VERIFY_SERVICE_SID"),
+        ) {
+            config = config.with_twilio_credentials(account_sid, auth_token, verify_service_sid);
+        }
+
         config
             .with_resend_api_key(std::env::var("RESEND_API_KEY").ok())
             .with_onramp_worker_secret(std::env::var("ONRAMP_WORKER_SECRET").ok())
-            .with_twilio_credentials(
-                std::env::var("TWILIO_ACCOUNT_SID").ok(),
-                std::env::var("TWILIO_AUTH_TOKEN").ok(),
-                std::env::var("TWILIO_VERIFY_SERVICE_SID").ok(),
-            )
             .with_simple_settler_owner_key(std::env::var("RELAY_SETTLER_OWNER_KEY").ok())
             .with_funder_owner_key(std::env::var("RELAY_FUNDER_OWNER_KEY").ok())
             .with_binance_keys(
