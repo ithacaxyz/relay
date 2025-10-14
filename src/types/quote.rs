@@ -158,7 +158,7 @@ impl Quote {
         hasher.update(self.intent.digest());
         hasher.update(self.extra_payment.to_be_bytes::<32>());
         hasher.update(self.eth_price.to_be_bytes::<32>());
-        hasher.update(&[self.payment_token_decimals]);
+        hasher.update([self.payment_token_decimals]);
         hasher.update(self.tx_gas.to_be_bytes());
         hasher.update(self.native_fee_estimate.max_fee_per_gas.to_be_bytes());
         hasher.update(self.native_fee_estimate.max_priority_fee_per_gas.to_be_bytes());
@@ -216,12 +216,7 @@ mod tests {
 
         // Test each field affects digest
         test_field!(base_quote, chain_id, 2, "chain_id must affect digest");
-        test_field!(
-            base_quote,
-            extra_payment,
-            U256::from(200),
-            "extra_payment must affect digest"
-        );
+        test_field!(base_quote, extra_payment, U256::from(200), "extra_payment must affect digest");
         test_field!(base_quote, eth_price, U256::from(3000), "eth_price must affect digest");
         test_field!(
             base_quote,
