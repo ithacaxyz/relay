@@ -269,21 +269,22 @@ impl RelayConfig {
     /// Sets the Twilio credentials.
     pub fn with_twilio_credentials(
         mut self,
-        account_sid: Option<String>,
-        auth_token: Option<String>,
-        verify_service_sid: Option<String>,
+        account_sid: String,
+        auth_token: String,
+        verify_service_sid: String,
     ) -> Self {
-        if let Some(phone) = self.phone.as_mut() {
-            if let Some(sid) = account_sid {
-                phone.twilio_account_sid = sid;
-            }
-            if let Some(token) = auth_token {
-                phone.twilio_auth_token = token;
-            }
-            if let Some(service_sid) = verify_service_sid {
-                phone.twilio_verify_service_sid = service_sid;
-            }
-        }
+        let phone = self.phone.get_or_insert_with(|| PhoneConfig {
+            twilio_account_sid: Default::default(),
+            twilio_auth_token: Default::default(),
+            twilio_verify_service_sid: Default::default(),
+            max_attempts: default_max_attempts(),
+            rate_limit_minutes: default_rate_limit_minutes(),
+        });
+
+        phone.twilio_account_sid = account_sid;
+        phone.twilio_auth_token = auth_token;
+        phone.twilio_verify_service_sid = verify_service_sid;
+
         self
     }
 
