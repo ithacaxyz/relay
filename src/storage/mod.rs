@@ -434,3 +434,68 @@ impl StorageApi for RelayStorage {
         self.inner.read_historical_usd_prices(queries).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AssetUid;
+
+    async fn get_test_storage() -> RelayStorage {
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            let pool = PgPool::connect(&db_url).await.expect("Failed to connect to PostgreSQL");
+            sqlx::migrate!().run(&pool).await.expect("Failed to run migrations");
+            RelayStorage::pg(pool)
+        } else {
+            RelayStorage::in_memory()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_historical_price_storage() {
+        let storage = get_test_storage().await;
+
+        let eth_uid = AssetUid::new("eth".to_string());
+        let usdc_uid = AssetUid::new("usdc".to_string());
+
+        // Store prices at specific timestamps
+        let prices = vec![
+            HistoricalPrice { asset_uid: eth_uid.clone(), timestamp: 1000, usd_price: 2500.0 },
+            HistoricalPrice { asset_uid: eth_uid.clone(), timestamp: 1600, usd_price: 5600.0 },
+            HistoricalPrice { asset_uid: usdc_uid.clone(), timestamp: 1000, usd_price: 1.0 },
+        ];
+
+        storage.store_historical_usd_prices(prices).await.unwrap();
+
+        // Test queries: (query_timestamp, expected_result)
+        let test_cases = vec![
+            (1000, Some((1000, 2500.0))), // Exact match
+            (1200, Some((1000, 2500.0))), // Approximate: 1000 is 200s away, 1600 is 400s away
+            (1700, Some((1600, 5600.0))), // Approximate: 1600 is 100s away
+            (5000, None),                 // No match: outside ±5 minute window
+        ];
+
+        for (query_ts, expected) in test_cases {
+            let results = storage
+                .read_historical_usd_prices(vec![HistoricalPriceKey {
+                    asset_uid: eth_uid.clone(),
+                    timestamp: query_ts,
+                }])
+                .await
+                .unwrap();
+
+            match expected {
+                Some((expected_ts, expected_price)) => {
+                    assert_eq!(results.len(), 1);
+                    let (ts, price) = results
+                        .get(&HistoricalPriceKey { asset_uid: eth_uid.clone(), timestamp: query_ts })
+                        .unwrap();
+                    assert_eq!(*ts, expected_ts);
+                    assert_eq!(*price, expected_price);
+                }
+                None => {
+                    assert_eq!(results.len(), 0);
+                }
+            }
+        }
+    }
+}

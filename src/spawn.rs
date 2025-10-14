@@ -148,7 +148,8 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let quote_signer_addr = quote_signer.address();
 
     // construct rpc module
-    let mut price_oracle = PriceOracle::new(PriceOracleConfig { rate_ttl: config.quote.rate_ttl });
+    let mut price_oracle = PriceOracle::new(PriceOracleConfig { rate_ttl: config.quote.rate_ttl })
+        .with_storage(storage.clone());
     if let Some(constant_rate) = config.quote.constant_rate {
         warn!("Setting a constant price rate: {constant_rate}. Should not be used in production!");
         price_oracle = price_oracle.with_constant_rate(constant_rate);
@@ -160,9 +161,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     let asset_info = AssetInfoService::new(512, &config);
     let asset_info_handle = asset_info.handle();
     tokio::spawn(asset_info);
-
-    // Enable periodic storage of historical USD prices
-    price_oracle = price_oracle.with_storage(storage.clone());
 
     // get contract versions from chain.
     let contracts = VersionedContracts::new(
