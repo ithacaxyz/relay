@@ -153,23 +153,38 @@ impl Quote {
 
     /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
+        let Self {
+            chain_id,
+            intent,
+            extra_payment,
+            eth_price,
+            payment_token_decimals,
+            tx_gas,
+            native_fee_estimate,
+            authorization_address,
+            additional_authorization,
+            orchestrator,
+            fee_token_deficit,
+            asset_deficits,
+        } = self;
+
         let mut hasher = Keccak256::new();
-        hasher.update(self.chain_id.to_be_bytes());
-        hasher.update(self.intent.digest());
-        hasher.update(self.extra_payment.to_be_bytes::<32>());
-        hasher.update(self.eth_price.to_be_bytes::<32>());
-        hasher.update([self.payment_token_decimals]);
-        hasher.update(self.tx_gas.to_be_bytes());
-        hasher.update(self.native_fee_estimate.max_fee_per_gas.to_be_bytes());
-        hasher.update(self.native_fee_estimate.max_priority_fee_per_gas.to_be_bytes());
-        if let Some(address) = self.authorization_address {
+        hasher.update(chain_id.to_be_bytes());
+        hasher.update(intent.digest());
+        hasher.update(extra_payment.to_be_bytes::<32>());
+        hasher.update(eth_price.to_be_bytes::<32>());
+        hasher.update([*payment_token_decimals]);
+        hasher.update(tx_gas.to_be_bytes());
+        hasher.update(native_fee_estimate.max_fee_per_gas.to_be_bytes());
+        hasher.update(native_fee_estimate.max_priority_fee_per_gas.to_be_bytes());
+        if let Some(address) = authorization_address {
             hasher.update(address);
         }
-        if let Some(auth) = &self.additional_authorization {
+        if let Some(auth) = additional_authorization {
             hasher.update(auth.signature_hash());
         }
-        hasher.update(self.orchestrator);
-        hasher.update([self.has_deficits() as u8]);
+        hasher.update(orchestrator);
+        hasher.update([(!fee_token_deficit.is_zero() || !asset_deficits.is_empty()) as u8]);
         hasher.finalize()
     }
 }
@@ -214,7 +229,6 @@ mod tests {
             asset_deficits: AssetDeficits::default(),
         };
 
-        // Test each field affects digest
         test_field!(base_quote, chain_id, 2, "chain_id must affect digest");
         test_field!(base_quote, extra_payment, U256::from(200), "extra_payment must affect digest");
         test_field!(base_quote, eth_price, U256::from(3000), "eth_price must affect digest");
@@ -226,7 +240,6 @@ mod tests {
         );
         test_field!(base_quote, tx_gas, 50000, "tx_gas must affect digest");
 
-        // Test native_fee_estimate fields
         let mut modified = base_quote.clone();
         modified.native_fee_estimate.max_fee_per_gas = 200;
         assert_ne!(
@@ -250,9 +263,6 @@ mod tests {
             "authorization_address must affect digest"
         );
 
-        // Note: additional_authorization is tested via its presence/absence
-        // and signature_hash(), which is tested separately
-
         test_field!(
             base_quote,
             orchestrator,
@@ -260,7 +270,6 @@ mod tests {
             "orchestrator must affect digest"
         );
 
-        // fee_token_deficit and asset_deficits affect digest via has_deficits()
         test_field!(
             base_quote,
             fee_token_deficit,
