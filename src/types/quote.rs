@@ -155,15 +155,127 @@ impl Quote {
     pub fn digest(&self) -> B256 {
         let mut hasher = Keccak256::new();
         hasher.update(self.chain_id.to_be_bytes());
+        hasher.update(self.intent.digest());
+        hasher.update(self.extra_payment.to_be_bytes::<32>());
+        hasher.update(self.eth_price.to_be_bytes::<32>());
+        hasher.update(&[self.payment_token_decimals]);
+        hasher.update(self.tx_gas.to_be_bytes());
+        hasher.update(self.native_fee_estimate.max_fee_per_gas.to_be_bytes());
+        hasher.update(self.native_fee_estimate.max_priority_fee_per_gas.to_be_bytes());
         if let Some(address) = self.authorization_address {
             hasher.update(address);
         }
         if let Some(auth) = &self.additional_authorization {
             hasher.update(auth.signature_hash());
         }
-        hasher.update(self.intent.digest());
         hasher.update(self.orchestrator);
         hasher.update([self.has_deficits() as u8]);
         hasher.finalize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that ensures all fields in Quote affect the digest.
+    ///
+    /// This test uses exhaustive struct initialization which will cause a compile error
+    /// if a new field is added to Quote but not included in the test, forcing developers
+    /// to update both the digest method and this test.
+    #[test]
+    fn test_quote_digest_includes_all_fields() {
+        // Helper macro to test that modifying a field changes the digest
+        macro_rules! test_field {
+            ($base:expr, $field:ident, $new_value:expr, $msg:expr) => {{
+                let mut modified = $base.clone();
+                modified.$field = $new_value;
+                assert_ne!($base.digest(), modified.digest(), $msg);
+            }};
+        }
+
+        // Base quote - using exhaustive initialization (no `..Default::default()`)
+        // This will fail to compile if a new field is added
+        let base_quote = Quote {
+            chain_id: 1,
+            intent: Intent::default(),
+            extra_payment: U256::from(100),
+            eth_price: U256::from(2000),
+            payment_token_decimals: 18,
+            tx_gas: 21000,
+            native_fee_estimate: Eip1559Estimation {
+                max_fee_per_gas: 100,
+                max_priority_fee_per_gas: 10,
+            },
+            authorization_address: Some(Address::ZERO),
+            additional_authorization: None,
+            orchestrator: Address::ZERO,
+            fee_token_deficit: U256::ZERO,
+            asset_deficits: AssetDeficits::default(),
+        };
+
+        // Test each field affects digest
+        test_field!(base_quote, chain_id, 2, "chain_id must affect digest");
+        test_field!(
+            base_quote,
+            extra_payment,
+            U256::from(200),
+            "extra_payment must affect digest"
+        );
+        test_field!(base_quote, eth_price, U256::from(3000), "eth_price must affect digest");
+        test_field!(
+            base_quote,
+            payment_token_decimals,
+            6,
+            "payment_token_decimals must affect digest"
+        );
+        test_field!(base_quote, tx_gas, 50000, "tx_gas must affect digest");
+
+        // Test native_fee_estimate fields
+        let mut modified = base_quote.clone();
+        modified.native_fee_estimate.max_fee_per_gas = 200;
+        assert_ne!(
+            base_quote.digest(),
+            modified.digest(),
+            "native_fee_estimate.max_fee_per_gas must affect digest"
+        );
+
+        let mut modified = base_quote.clone();
+        modified.native_fee_estimate.max_priority_fee_per_gas = 20;
+        assert_ne!(
+            base_quote.digest(),
+            modified.digest(),
+            "native_fee_estimate.max_priority_fee_per_gas must affect digest"
+        );
+
+        test_field!(
+            base_quote,
+            authorization_address,
+            Some(Address::repeat_byte(1)),
+            "authorization_address must affect digest"
+        );
+
+        // Note: additional_authorization is tested via its presence/absence
+        // and signature_hash(), which is tested separately
+
+        test_field!(
+            base_quote,
+            orchestrator,
+            Address::repeat_byte(1),
+            "orchestrator must affect digest"
+        );
+
+        // fee_token_deficit and asset_deficits affect digest via has_deficits()
+        test_field!(
+            base_quote,
+            fee_token_deficit,
+            U256::from(100),
+            "fee_token_deficit must affect digest"
+        );
+
+        // Verify intent changes affect digest
+        let mut modified = base_quote.clone();
+        modified.intent = modified.intent.with_eoa(Address::repeat_byte(1));
+        assert_ne!(base_quote.digest(), modified.digest(), "intent must affect digest");
     }
 }
