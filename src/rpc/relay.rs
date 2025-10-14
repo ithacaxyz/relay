@@ -2784,6 +2784,13 @@ impl RelayApiServer for Relay {
         // broadcasts intents in transactions
         let id = match context {
             PrepareCallsContext::Quote(quotes) => {
+                // Validate that if there's a single quote with a payer, a fee signature must be provided
+                if let [quote] = quotes.ty().quotes.as_slice() {
+                    if !quote.intent.payer().is_zero() && capabilities.fee_signature.is_empty() {
+                        return Err(IntentError::MissingFeeSignature.into());
+                    }
+                }
+
                 self.send_intents(*quotes, capabilities, signature).await.inspect_err(|err| {
                     error!(
                         %err,
