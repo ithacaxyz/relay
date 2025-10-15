@@ -734,17 +734,21 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn verified_phone_exists(&self, phone: &str) -> Result<bool> {
-        let exists = sqlx::query!(
-            "select * from phones where phone = $1 and verified_at is not null",
-            phone
+    async fn get_phone_verified_at(
+        &self,
+        phone: &str,
+        account: Option<Address>,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let row = sqlx::query!(
+            "select verified_at from phones where phone = $1 and ($2::bytea is null or address = $2) and verified_at is not null order by verified_at desc limit 1",
+            phone,
+            account.as_ref().map(|a| a.as_slice())
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(eyre::Error::from)?
-        .is_some();
+        .map_err(eyre::Error::from)?;
 
-        Ok(exists)
+        Ok(row.and_then(|r| r.verified_at.map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))))
     }
 
     #[instrument(skip_all)]
@@ -755,8 +759,8 @@ impl StorageApi for PgStorage {
         verification_sid: &str,
     ) -> Result<()> {
         sqlx::query!(
-            "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0) 
-             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, created_at = now()",
+            "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0)
+             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, verified_at = null, created_at = now()",
             account.as_slice(),
             phone,
             verification_sid,
@@ -838,7 +842,6 @@ impl StorageApi for PgStorage {
         &self,
         account: Address,
     ) -> Result<OnrampVerificationStatus> {
-        // Try verified email first, then fall back to unverified (with created_at timestamp)
         let email_row = sqlx::query!(
             r#"
             select
