@@ -160,6 +160,28 @@ impl AssetPrice {
     }
 }
 
+/// Key for looking up historical asset prices.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HistoricalPriceKey {
+    /// The unique identifier for the asset.
+    pub asset_uid: AssetUid,
+    /// Unix timestamp in seconds. When stored, this is normalized to the minute boundary
+    /// (seconds within the minute are set to 0).
+    pub timestamp: u64,
+}
+
+/// Historical USD price for an asset at a specific timestamp.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoricalPrice {
+    /// The unique identifier for the asset.
+    pub asset_uid: AssetUid,
+    /// Unix timestamp in seconds, normalized to the minute boundary
+    /// (seconds within the minute are set to 0).
+    pub timestamp: u64,
+    /// The price in USD.
+    pub usd_price: f64,
+}
+
 /// Asset metadata with price information
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetMetadataWithPrice {

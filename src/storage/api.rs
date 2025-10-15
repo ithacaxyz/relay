@@ -10,7 +10,9 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, Quote, SignedCall, rpc::BundleId},
+    types::{
+        CreatableAccount, HistoricalPrice, HistoricalPriceKey, Quote, SignedCall, rpc::BundleId,
+    },
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -405,4 +407,22 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets total bundle count for an address (both single-chain and multi-chain).
     /// Note: This requires a full scan and should only be called when necessary.
     async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64>;
+
+    /// Stores historical USD prices for assets.
+    /// Timestamps should be normalized to minute boundaries before calling this method.
+    async fn store_historical_usd_prices(&self, prices: Vec<HistoricalPrice>) -> Result<()>;
+
+    /// Reads historical USD prices for specific asset/timestamp pairs.
+    ///
+    /// First attempts exact timestamp matches. If no exact match is found for a query,
+    /// falls back to finding the closest price within a ±5 minute tolerance window.
+    ///
+    /// Returns a HashMap where each value is a tuple of `(actual_timestamp, usd_price)`.
+    /// The `actual_timestamp` indicates which timestamp was actually used (may differ from
+    /// requested timestamp due to approximate matching). Only entries that were found
+    /// (either exact or within tolerance) are included in the result.
+    async fn read_historical_usd_prices(
+        &self,
+        queries: Vec<HistoricalPriceKey>,
+    ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>>;
 }

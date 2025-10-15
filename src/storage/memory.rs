@@ -16,7 +16,7 @@ use crate::{
         TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{CreatableAccount, SignedCall, rpc::BundleId},
+    types::{CreatableAccount, HistoricalPrice, HistoricalPriceKey, SignedCall, rpc::BundleId},
 };
 use alloy::{
     consensus::{Transaction, TxEnvelope},
@@ -102,6 +102,7 @@ pub struct InMemoryStorage {
         DashMap<BridgeTransferId, (BridgeTransfer, Option<serde_json::Value>, BridgeTransferState)>,
     pull_gas_transactions: DashMap<B256, (PullGasState, TxEnvelope, Address)>,
     precalls: DashMap<(Address, ChainId, U256), SignedCall>,
+    historical_usd_prices: DashMap<HistoricalPriceKey, f64>,
 }
 
 impl InMemoryStorage {
@@ -852,6 +853,63 @@ impl StorageApi for InMemoryStorage {
             .count();
 
         Ok((multichain_count + singlechain_count) as u64)
+    }
+
+    async fn store_historical_usd_prices(&self, prices: Vec<HistoricalPrice>) -> Result<()> {
+        for price in prices {
+            let key = HistoricalPriceKey { asset_uid: price.asset_uid, timestamp: price.timestamp };
+            self.historical_usd_prices.insert(key, price.usd_price);
+        }
+        Ok(())
+    }
+
+    async fn read_historical_usd_prices(
+        &self,
+        queries: Vec<HistoricalPriceKey>,
+    ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>> {
+        let mut result = HashMap::new();
+
+        // Try exact matches first
+        for key in &queries {
+            if let Some(price) = self.historical_usd_prices.get(key) {
+                result.insert(key.clone(), (key.timestamp, *price));
+            }
+        }
+
+        // For queries that didn't get exact matches, try approximate lookup (±5 minutes)
+        for query in queries {
+            if result.contains_key(&query) {
+                continue;
+            }
+
+            // Find closest timestamp within ±5 minutes (300 seconds)
+            let mut closest: Option<(HistoricalPriceKey, f64)> = None;
+            let mut closest_distance = 301; // Just outside tolerance window
+
+            for entry in self.historical_usd_prices.iter() {
+                let stored_key = entry.key();
+                let stored_price = entry.value();
+
+                // Only consider same asset
+                if stored_key.asset_uid != query.asset_uid {
+                    continue;
+                }
+
+                let distance = (stored_key.timestamp as i64 - query.timestamp as i64).abs();
+
+                // Within ±5 minutes and closer than previous best
+                if distance <= 300 && distance < closest_distance {
+                    closest_distance = distance;
+                    closest = Some((stored_key.clone(), *stored_price));
+                }
+            }
+
+            if let Some((found_key, price)) = closest {
+                result.insert(query, (found_key.timestamp, price));
+            }
+        }
+
+        Ok(result)
     }
 }
 

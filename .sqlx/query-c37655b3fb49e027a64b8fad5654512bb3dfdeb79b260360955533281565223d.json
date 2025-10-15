@@ -28,7 +28,9 @@
                 "refunds_scheduled",
                 "refunds_ready",
                 "settlements_processing",
-                "settlement_completion_queued"
+                "settlement_completion_queued",
+                "fee_payer_queued",
+                "fee_payer_completed"
               ]
             }
           }

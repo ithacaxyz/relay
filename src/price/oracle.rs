@@ -2,7 +2,8 @@ use super::CoinGecko;
 use crate::{
     config::RelayConfig,
     price::{calculate_usd_value, fetchers::PriceFetcher, metrics::CoinPairMetrics},
-    types::{AssetDescriptor, AssetUid},
+    storage::{RelayStorage, StorageApi},
+    types::{AssetDescriptor, AssetUid, HistoricalPrice},
 };
 use alloy::primitives::U256;
 use std::{
@@ -10,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::trace;
+use tracing::{trace, warn};
 
 /// Coin pair rate taken a certain timestamp.
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +31,8 @@ pub enum PriceOracleMessage {
     Lookup { from: AssetUid, to: AssetUid, tx: oneshot::Sender<Option<f64>> },
     /// Message to lookup the USD price of a coin.
     LookupUsd { uid: AssetUid, tx: oneshot::Sender<Option<f64>> },
+    /// Message to get all current USD prices.
+    GetAllPrices { tx: oneshot::Sender<Vec<(AssetUid, f64)>> },
 }
 
 /// Configuration for the price oracle.
@@ -117,6 +120,11 @@ impl PriceOracle {
                                 .map(|info| info.rate.rate),
                         );
                     }
+                    PriceOracleMessage::GetAllPrices { tx } => {
+                        trace!("Received get all prices request.");
+                        let prices = registry.get_all_usd_prices();
+                        let _ = tx.send(prices);
+                    }
                 }
             }
         });
@@ -127,6 +135,61 @@ impl PriceOracle {
     /// Returns [`Self`] with a constant rate to fallback to.
     pub fn with_constant_rate(mut self, rate: f64) -> Self {
         self.constant_rate = Some(rate);
+        self
+    }
+
+    /// Returns [`Self`] with periodic storage of historical USD prices.
+    ///
+    /// When storage is provided, a background task will store all current USD prices
+    /// every 60 seconds with timestamps normalized to minute boundaries.
+    pub fn with_storage(self, storage: RelayStorage) -> Self {
+        let tx = self.tx.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+            loop {
+                interval.tick().await;
+
+                // Normalize timestamp to minute boundary (seconds set to 0)
+                let now = chrono::Utc::now().timestamp();
+                let normalized_timestamp = (now / 60) * 60;
+                let normalized_timestamp_u64 = normalized_timestamp as u64;
+
+                // Get all current prices from the oracle
+                let (req_tx, req_rx) = oneshot::channel();
+                let _ = tx.send(PriceOracleMessage::GetAllPrices { tx: req_tx });
+
+                let prices = match req_rx.await {
+                    Ok(prices) => prices,
+                    Err(_) => {
+                        trace!("Failed to receive prices from oracle");
+                        continue;
+                    }
+                };
+
+                if prices.is_empty() {
+                    trace!("No prices to store");
+                    continue;
+                }
+
+                let historical_prices = prices
+                    .into_iter()
+                    .map(|(asset_uid, usd_price)| HistoricalPrice {
+                        asset_uid,
+                        timestamp: normalized_timestamp_u64,
+                        usd_price,
+                    })
+                    .collect();
+
+                if let Err(e) = storage.store_historical_usd_prices(historical_prices).await {
+                    warn!(error = ?e, "Failed to store historical USD prices");
+                } else {
+                    trace!(timestamp = normalized_timestamp_u64, "Stored historical USD prices");
+                }
+            }
+        });
+
         self
     }
 
@@ -224,5 +287,10 @@ impl PriceRegistry {
     /// Gets the USD rate for the given coin
     fn get_usd(&self, uid: &AssetUid) -> Option<&CoinPairInfo> {
         self.usd_prices.get(uid)
+    }
+
+    /// Gets all USD prices currently in the registry
+    fn get_all_usd_prices(&self) -> Vec<(AssetUid, f64)> {
+        self.usd_prices.iter().map(|(uid, info)| (uid.clone(), info.rate.rate)).collect()
     }
 }
