@@ -4,11 +4,14 @@ use crate::{
     asset::{self, AssetInfoServiceHandle},
     chains::Chains,
     constants::SIMULATEV1_NATIVE_ADDRESS,
-    error::{AssetError, RelayError},
+    error::{AssetError, RelayError, StorageError},
     price::{PriceOracle, calculate_usd_value},
+    storage::StorageApi,
     types::{
-        AssetMetadata, AssetPrice, AssetType, IERC20, IERC20::IERC20Events, IERC721,
-        IERC721::IERC721Events, Quote,
+        AssetMetadata, AssetPrice, AssetType, HistoricalPriceKey,
+        IERC20::{self, IERC20Events},
+        IERC721::{self, IERC721Events},
+        Quote,
     },
 };
 use alloy::{
@@ -685,6 +688,89 @@ impl AssetDiffResponse {
             .sum();
 
         self.fee_totals.insert(0, AssetPrice { currency: "usd".to_string(), value: total });
+    }
+
+    /// Populates historical USD prices for asset diffs.
+    ///
+    /// Uses block numbers to fetch timestamps, then queries historical prices for each
+    /// asset in the diffs at their respective chain's inclusion timestamp.
+    pub async fn populate_historical_prices<S>(
+        &mut self,
+        storage: &S,
+        chains: &Chains,
+        chain_block_numbers: HashMap<ChainId, alloy::primitives::BlockNumber>,
+    ) -> Result<(), StorageError>
+    where
+        S: StorageApi,
+    {
+        let block_fetches =
+            chain_block_numbers.into_iter().filter_map(|(chain_id, block_number)| {
+                let chain = chains.get(chain_id)?;
+                let provider = chain.provider().clone();
+
+                Some(async move {
+                    let block = provider.get_block(block_number.into()).await.ok()??;
+                    // todo: is there a better way to get this timestamp?
+                    Some((chain_id, block.header.timestamp))
+                })
+            });
+
+        let chain_timestamps: HashMap<ChainId, u64> =
+            join_all(block_fetches).await.into_iter().flatten().collect();
+
+        // Collect all (asset_uid, timestamp) pairs that need prices
+        let mut price_queries: HashSet<HistoricalPriceKey> = HashSet::default();
+
+        for (chain_id, asset_diffs) in &self.asset_diffs {
+            let Some(chain) = chains.get(*chain_id) else { continue };
+            let Some(&timestamp) = chain_timestamps.get(chain_id) else { continue };
+
+            for (_, diffs) in &asset_diffs.0 {
+                for diff in diffs {
+                    if diff.metadata.decimals.is_none() {
+                        continue;
+                    }
+
+                    if let Some((asset_uid, _)) =
+                        chain.assets().find_by_address(diff.address.unwrap_or(Address::ZERO))
+                    {
+                        price_queries
+                            .insert(HistoricalPriceKey { asset_uid: asset_uid.clone(), timestamp });
+                    }
+                }
+            }
+        }
+
+        if price_queries.is_empty() {
+            return Ok(());
+        }
+
+        let prices =
+            storage.read_historical_usd_prices(price_queries.into_iter().collect()).await?;
+
+        // Populate fiat prices in asset diffs
+        for (chain_id, asset_diffs) in &mut self.asset_diffs {
+            let Some(chain) = chains.get(*chain_id) else { continue };
+            let Some(&timestamp) = chain_timestamps.get(chain_id) else { continue };
+
+            for (_, diffs) in &mut asset_diffs.0 {
+                for diff in diffs {
+                    let Some(decimals) = diff.metadata.decimals else { continue };
+                    if let Some((asset_uid, _)) =
+                        chain.assets().find_by_address(diff.address.unwrap_or(Address::ZERO))
+                        && let Some((_, usd_price)) = prices
+                            .get(&HistoricalPriceKey { asset_uid: asset_uid.clone(), timestamp })
+                    {
+                        diff.fiat = Some(AssetPrice {
+                            currency: "usd".to_string(),
+                            value: calculate_usd_value(diff.value, *usd_price, decimals),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
