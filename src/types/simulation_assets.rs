@@ -690,7 +690,7 @@ impl AssetDiffResponse {
         self.fee_totals.insert(0, AssetPrice { currency: "usd".to_string(), value: total });
     }
 
-    /// Populates historical USD prices for asset diffs.
+    /// Populates historical USD prices for asset diffs and fee totals.
     ///
     /// Uses block numbers to fetch timestamps, then queries historical prices for each
     /// asset in the diffs at their respective chain's inclusion timestamp.
@@ -699,6 +699,7 @@ impl AssetDiffResponse {
         storage: &S,
         chains: &Chains,
         chain_block_numbers: HashMap<ChainId, alloy::primitives::BlockNumber>,
+        quotes: &[Quote],
     ) -> Result<(), StorageError>
     where
         S: StorageApi,
@@ -741,6 +742,17 @@ impl AssetDiffResponse {
             }
         }
 
+        // Collect fee token price queries from quotes
+        for quote in quotes {
+            let Some(&timestamp) = chain_timestamps.get(&quote.chain_id) else { continue };
+            let fee_token = quote.intent.payment_token();
+
+            if let Some((asset_uid, _)) = chains.fee_token(quote.chain_id, fee_token) {
+                price_queries
+                    .insert(HistoricalPriceKey { asset_uid: asset_uid.clone(), timestamp });
+            }
+        }
+
         if price_queries.is_empty() {
             return Ok(());
         }
@@ -769,6 +781,29 @@ impl AssetDiffResponse {
                 }
             }
         }
+
+        // Populate fee totals from quotes
+        for quote in quotes {
+            let Some(&timestamp) = chain_timestamps.get(&quote.chain_id) else { continue };
+
+            if let Some((asset_uid, token_info)) =
+                chains.fee_token(quote.chain_id, quote.intent.payment_token())
+                && let Some((_, usd_price)) =
+                    prices.get(&HistoricalPriceKey { asset_uid: asset_uid.clone(), timestamp })
+            {
+                let fee_usd = calculate_usd_value(
+                    quote.intent.total_payment_amount(),
+                    *usd_price,
+                    token_info.decimals,
+                );
+
+                self.fee_totals.insert(
+                    quote.chain_id,
+                    AssetPrice { currency: "usd".to_string(), value: fee_usd },
+                );
+            }
+        }
+        self.update_aggregated_fee();
 
         Ok(())
     }

@@ -3200,6 +3200,7 @@ impl RelayApiServer for Relay {
                             &self.inner.storage,
                             &self.inner.chains,
                             chain_block_numbers,
+                            &quotes,
                         )
                         .await?;
 
@@ -3268,6 +3269,7 @@ impl RelayApiServer for Relay {
                                 &self.inner.storage,
                                 &self.inner.chains,
                                 HashMap::from_iter([(chain_id, block_number)]),
+                                &quotes,
                             )
                             .await?;
                     }
