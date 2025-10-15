@@ -497,7 +497,7 @@ pub async fn fetch_nft_uris<P: Provider>(
     nfts: &[(Address, U256)],
 ) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
     if nfts.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(HashMap::default());
     }
 
     let calls = build_token_uri_calls(nfts);
