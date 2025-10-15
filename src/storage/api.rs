@@ -10,7 +10,10 @@ use crate::{
         PendingTransaction, PullGasState, RelayTransaction, TransactionStatus, TxId,
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
-    types::{AssetDiffs, CreatableAccount, Quote, SignedCall, rpc::BundleId},
+    types::{
+        AssetDiffs, CreatableAccount, HistoricalPrice, HistoricalPriceKey, Quote, SignedCall,
+        rpc::BundleId,
+    },
 };
 use alloy::{
     consensus::TxEnvelope,
@@ -413,4 +416,22 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Returns a vector in the same order as `tx_ids`, with `None` for transactions that have no
     /// stored diffs.
     async fn read_asset_diffs(&self, tx_ids: Vec<TxId>) -> Result<Vec<Option<AssetDiffs>>>;
+
+    /// Stores historical USD prices for assets.
+    /// Timestamps should be normalized to minute boundaries before calling this method.
+    async fn store_historical_usd_prices(&self, prices: Vec<HistoricalPrice>) -> Result<()>;
+
+    /// Reads historical USD prices for specific asset/timestamp pairs.
+    ///
+    /// First attempts exact timestamp matches. If no exact match is found for a query,
+    /// falls back to finding the closest price within a ±5 minute tolerance window.
+    ///
+    /// Returns a HashMap where each value is a tuple of `(actual_timestamp, usd_price)`.
+    /// The `actual_timestamp` indicates which timestamp was actually used (may differ from
+    /// requested timestamp due to approximate matching). Only entries that were found
+    /// (either exact or within tolerance) are included in the result.
+    async fn read_historical_usd_prices(
+        &self,
+        queries: Vec<HistoricalPriceKey>,
+    ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>>;
 }

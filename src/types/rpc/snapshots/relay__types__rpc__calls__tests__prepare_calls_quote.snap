@@ -95,7 +95,7 @@ expression: response_value
   "context": {
     "quote": {
       "feePayerQuote": null,
-      "hash": "0x407b032265b9dcda1a27ce4e10b21271ea9342cf8f09f713f2684823879a9272",
+      "hash": "0x9235b51b0946122fc01f5566a5e06e803e0883e9dd4f29dee74db6361b956365",
       "multiChainRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
       "quotes": [
         {
@@ -164,7 +164,7 @@ expression: response_value
     "publicKey": "0x0000000000000000000000000000000000000000",
     "type": "secp256k1"
   },
-  "signature": "0x664f96767c1ed158e6596c36c0ab845d99f80d30a14bb11d025d4a26657cf1d24df62f747a1995098f82f361fbd39c0fda3e6df570d1ef2bbeac14684356d6631b",
+  "signature": "0x6018e383fa88c32e685f686cd15ee8a2cff3751f9e4a3df2638cb26eefe0693a157703a794b2cbe946800db7886a21227ffdb05ca04859bb9d89ece7e603f26a1c",
   "typedData": {
     "domain": {},
     "message": null,

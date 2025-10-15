@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT asset_uid, timestamp, usd_price\n            FROM historical_usd_prices\n            WHERE (asset_uid, timestamp) IN (\n                SELECT * FROM UNNEST($1::text[], $2::bigint[])\n            )\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "asset_uid",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "timestamp",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "usd_price",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e4ced6542c605a22a57fbe6a34e50fe20e9ffae4532bde1f123626595ebe3083"
+}
