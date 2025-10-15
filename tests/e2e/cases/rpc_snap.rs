@@ -534,12 +534,43 @@ async fn test_onramp() -> eyre::Result<()> {
         ".phoneVerifiedAt" => "[phone_timestamp]",
     });
 
-    // Test with only email verified
+    // Test with email - first unverified, then verified
     let email_only_addr = Address::random();
     let email_only = "emailonly@example.com";
     env.relay_handle.storage.add_unverified_email(email_only_addr, email_only, "token456").await?;
+
+    // Test unverified state
+    let status_unverified_email = env
+        .relay_endpoint
+        .onramp_status(OnrampStatusParameters { address: email_only_addr })
+        .await?;
+
+    assert!(
+        status_unverified_email.email.is_some(),
+        "Email timestamp (created_at) should be present for unverified email"
+    );
+    assert!(status_unverified_email.phone.is_none(), "Phone should be None");
+
+    insta::assert_json_snapshot!("status_unverified_email", status_unverified_email, {
+        ".email" => "[email_timestamp]",
+    });
+
+    let contact_unverified_email = env
+        .relay_endpoint
+        .get_onramp_contact_info(GetOnrampContactInfoParameters {
+            address: email_only_addr,
+            secret: "test_onramp_secret".to_string(),
+        })
+        .await?;
+
+    assert_eq!(contact_unverified_email.email.as_deref(), Some(email_only));
+    assert!(contact_unverified_email.phone.is_none());
+
+    insta::assert_json_snapshot!("contact_info_unverified_email", contact_unverified_email);
+
     env.relay_handle.storage.verify_email(email_only_addr, email_only, "token456").await?;
 
+    // Test verified state
     let status_email_only = env
         .relay_endpoint
         .onramp_status(OnrampStatusParameters { address: email_only_addr })

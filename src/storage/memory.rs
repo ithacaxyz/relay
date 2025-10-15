@@ -36,6 +36,13 @@ struct PhoneKey {
     phone: String,
 }
 
+/// Value for unverified email storage
+#[derive(Debug, Clone)]
+struct UnverifiedEmail {
+    token: String,
+    created_at: DateTime<Utc>,
+}
+
 /// Value for unverified phone storage
 #[derive(Debug, Clone)]
 struct UnverifiedPhone {
@@ -90,7 +97,7 @@ pub struct InMemoryStorage {
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     transactions_by_address: DashMap<Address, Vec<RelayTransaction>>,
-    unverified_emails: DashMap<(Address, String), String>,
+    unverified_emails: DashMap<(Address, String), UnverifiedEmail>,
     verified_emails: DashMap<String, VerifiedEmail>,
     unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
     verified_phones: DashMap<String, VerifiedPhone>,
@@ -223,18 +230,18 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
-        self.unverified_emails.insert((account, email.to_string()), token.to_string());
+        self.unverified_emails.insert(
+            (account, email.to_string()),
+            UnverifiedEmail { token: token.to_string(), created_at: Utc::now() },
+        );
 
         Ok(())
     }
 
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
         let key = (account, email.to_string());
-        let valid = self
-            .unverified_emails
-            .get(&key)
-            .map(|expected_token| token == *expected_token)
-            .unwrap_or_default();
+        let valid =
+            self.unverified_emails.get(&key).map(|entry| token == entry.token).unwrap_or_default();
 
         if valid {
             self.unverified_emails.remove(&key);
@@ -303,11 +310,24 @@ impl StorageApi for InMemoryStorage {
         &self,
         account: Address,
     ) -> Result<OnrampVerificationStatus> {
-        Ok(OnrampVerificationStatus {
-            email: self.verified_emails.iter().find_map(|entry| {
+        // Try verified email first, then fall back to unverified (with created_at timestamp)
+        let email = self
+            .verified_emails
+            .iter()
+            .find_map(|entry| {
                 (entry.value().account == account)
                     .then(|| entry.value().verified_at.timestamp() as u64)
-            }),
+            })
+            .or_else(|| {
+                // Check if there's an unverified email for this account and return created_at
+                // timestamp
+                self.unverified_emails.iter().find_map(|entry| {
+                    (entry.key().0 == account).then(|| entry.value().created_at.timestamp() as u64)
+                })
+            });
+
+        Ok(OnrampVerificationStatus {
+            email,
             phone: self.verified_phones.iter().find_map(|entry| {
                 (entry.value().account == account)
                     .then(|| entry.value().verified_at.timestamp() as u64)
