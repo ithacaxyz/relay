@@ -1234,7 +1234,7 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::default();
         for row in rows {
             result.insert(
                 (row.chain_id as u64, Address::from_slice(&row.asset_address)),
@@ -1256,7 +1256,7 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::default();
         for row in rows {
             result.insert(
                 (row.chain_id as u64, Address::from_slice(&row.asset_address)),
@@ -1806,7 +1806,7 @@ impl StorageApi for PgStorage {
         queries: Vec<HistoricalPriceKey>,
     ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>> {
         if queries.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(HashMap::default());
         }
 
         let asset_uids: Vec<String> =
@@ -1829,7 +1829,7 @@ impl StorageApi for PgStorage {
         .await
         .map_err(eyre::Error::from)?;
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::default();
         for row in rows {
             let key = HistoricalPriceKey {
                 asset_uid: AssetUid::new(row.asset_uid.clone()),
