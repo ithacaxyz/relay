@@ -3112,6 +3112,21 @@ impl RelayApiServer for Relay {
         let entries_futures = bundles.into_iter().enumerate().map(async |(idx, history_entry)| {
             let index: u64 = offset + idx as u64;
 
+            // Helper to remove fee from asset diffs to avoid confusing the user
+            let remove_fee = |asset_diff: &mut AssetDiffResponse, quote: &Quote| {
+                if let Some(diffs) = asset_diff.asset_diffs.get_mut(&quote.chain_id) {
+                    diffs.remove_payer_fee(
+                        if quote.intent.payer().is_zero() {
+                            *quote.intent.eoa()
+                        } else {
+                            quote.intent.payer()
+                        },
+                        quote.intent.payment_token().into(),
+                        quote.intent.total_payment_amount(),
+                    );
+                }
+            };
+
             let entry = match history_entry {
                 // Multi-chain bundle path
                 BundleHistoryEntry::Interop { bundle: bundle_with_status, timestamp } => {
@@ -3148,12 +3163,12 @@ impl RelayApiServer for Relay {
                         self.inner.storage.read_transaction_statuses(&all_tx_ids).await?;
 
                     let mut transactions = Vec::with_capacity(tx_statuses.len());
-                    for tx_status_opt in tx_statuses {
+                    for tx_status_opt in &tx_statuses {
                         if let Some((chain_id, tx_status)) = tx_status_opt
                             && let Some(tx_hash) = tx_status.tx_hash()
                         {
                             transactions.push(CallHistoryTransaction {
-                                chain_id,
+                                chain_id: *chain_id,
                                 transaction_hash: tx_hash,
                             });
                         }
@@ -3170,8 +3185,43 @@ impl RelayApiServer for Relay {
                         })
                         .collect::<Vec<_>>();
 
-                    // TODO: Implement asset diff
-                    let asset_diff = AssetDiffResponse::default();
+                    // Retrieve stored asset diffs for this bundle and collect block numbers to find
+                    // asset prices.
+                    let mut asset_diff = AssetDiffResponse::default();
+                    let mut chain_block_numbers = HashMap::default();
+
+                    for (diffs_opt, status_opt) in self
+                        .inner
+                        .storage
+                        .read_asset_diffs(all_tx_ids)
+                        .await?
+                        .into_iter()
+                        .zip(&tx_statuses)
+                    {
+                        if let Some(diffs) = diffs_opt
+                            && let Some((chain_id, status)) = status_opt
+                        {
+                            asset_diff.asset_diffs.entry(*chain_id).or_insert(diffs);
+                            if let TransactionStatus::Confirmed(receipt) = status
+                                && let Some(block_number) = receipt.block_number
+                            {
+                                chain_block_numbers.insert(*chain_id, block_number);
+                            }
+                        }
+                    }
+
+                    for quote in &quotes {
+                        remove_fee(&mut asset_diff, quote);
+                    }
+
+                    asset_diff
+                        .populate_historical_prices(
+                            &self.inner.storage,
+                            &self.inner.chains,
+                            chain_block_numbers,
+                            &quotes,
+                        )
+                        .await?;
 
                     CallHistoryEntry {
                         id: bundle.id,
@@ -3192,7 +3242,7 @@ impl RelayApiServer for Relay {
                     tx_hash,
                     timestamp,
                 } => {
-                    let (key_hash, quotes) = if let Some(quote) = quote {
+                    let (key_hash, quotes) = if let Some(ref quote) = quote {
                         let key_hash = if quote.intent.signature().len() == 65 {
                             // Signed by root eoa key
                             B256::ZERO
@@ -3200,7 +3250,7 @@ impl RelayApiServer for Relay {
                             Signature::decode_key_hash(quote.intent.signature())
                                 .unwrap_or(B256::ZERO)
                         };
-                        (key_hash, vec![(*quote)])
+                        (key_hash, vec![*quote.clone()])
                     } else {
                         // Old transaction without stored quote data
                         (B256::ZERO, vec![])
@@ -3213,21 +3263,43 @@ impl RelayApiServer for Relay {
                         })
                         .unwrap_or_default();
 
-                    // TODO: Implement asset diff
-                    let asset_diff = AssetDiffResponse::default();
-
                     // Get tx_id from bundle_transactions table
                     let tx_ids = self.inner.storage.get_bundle_transactions(bundle_id).await?;
-                    let call_status = if let Some(&tx_id) = tx_ids.first() {
-                        self.inner
-                            .storage
-                            .read_transaction_status(tx_id)
-                            .await?
-                            .map(|(_, tx_status)| tx_status.to_call_status_code())
-                            .unwrap_or(CallStatusCode::Pending)
+
+                    // Retrieve stored asset diffs for this bundle
+                    let stored_diffs = self.inner.storage.read_asset_diffs(tx_ids.clone()).await?;
+                    let mut asset_diff = AssetDiffResponse::default();
+                    for diffs in stored_diffs.into_iter().flatten() {
+                        asset_diff.asset_diffs.entry(chain_id).or_insert(diffs);
+                    }
+
+                    if let Some(quote) = &quote {
+                        remove_fee(&mut asset_diff, quote);
+                    }
+
+                    let tx_status_opt = if let Some(&tx_id) = tx_ids.first() {
+                        self.inner.storage.read_transaction_status(tx_id).await?
                     } else {
-                        CallStatusCode::Pending
+                        None
                     };
+
+                    if let Some((_, status)) = &tx_status_opt
+                        && let TransactionStatus::Confirmed(receipt) = status
+                        && let Some(block_number) = receipt.block_number
+                    {
+                        asset_diff
+                            .populate_historical_prices(
+                                &self.inner.storage,
+                                &self.inner.chains,
+                                HashMap::from_iter([(chain_id, block_number)]),
+                                &quotes,
+                            )
+                            .await?;
+                    }
+
+                    let call_status = tx_status_opt
+                        .map(|(_, tx_status)| tx_status.to_call_status_code())
+                        .unwrap_or(CallStatusCode::Pending);
 
                     CallHistoryEntry {
                         id: bundle_id,
