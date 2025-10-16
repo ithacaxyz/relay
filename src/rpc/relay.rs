@@ -3112,6 +3112,21 @@ impl RelayApiServer for Relay {
         let entries_futures = bundles.into_iter().enumerate().map(async |(idx, history_entry)| {
             let index: u64 = offset + idx as u64;
 
+            // Helper to remove fee from asset diffs to avoid confusing the user
+            let remove_fee = |asset_diff: &mut AssetDiffResponse, quote: &Quote| {
+                if let Some(diffs) = asset_diff.asset_diffs.get_mut(&quote.chain_id) {
+                    diffs.remove_payer_fee(
+                        if quote.intent.payer().is_zero() {
+                            *quote.intent.eoa()
+                        } else {
+                            quote.intent.payer()
+                        },
+                        quote.intent.payment_token().into(),
+                        quote.intent.total_payment_amount(),
+                    );
+                }
+            };
+
             let entry = match history_entry {
                 // Multi-chain bundle path
                 BundleHistoryEntry::Interop { bundle: bundle_with_status, timestamp } => {
@@ -3195,6 +3210,10 @@ impl RelayApiServer for Relay {
                         }
                     }
 
+                    for quote in &quotes {
+                        remove_fee(&mut asset_diff, quote);
+                    }
+
                     asset_diff
                         .populate_historical_prices(
                             &self.inner.storage,
@@ -3223,7 +3242,7 @@ impl RelayApiServer for Relay {
                     tx_hash,
                     timestamp,
                 } => {
-                    let (key_hash, quotes) = if let Some(quote) = quote {
+                    let (key_hash, quotes) = if let Some(ref quote) = quote {
                         let key_hash = if quote.intent.signature().len() == 65 {
                             // Signed by root eoa key
                             B256::ZERO
@@ -3231,7 +3250,7 @@ impl RelayApiServer for Relay {
                             Signature::decode_key_hash(quote.intent.signature())
                                 .unwrap_or(B256::ZERO)
                         };
-                        (key_hash, vec![(*quote)])
+                        (key_hash, vec![*quote.clone()])
                     } else {
                         // Old transaction without stored quote data
                         (B256::ZERO, vec![])
@@ -3252,6 +3271,10 @@ impl RelayApiServer for Relay {
                     let mut asset_diff = AssetDiffResponse::default();
                     for diffs in stored_diffs.into_iter().flatten() {
                         asset_diff.asset_diffs.entry(chain_id).or_insert(diffs);
+                    }
+
+                    if let Some(quote) = &quote {
+                        remove_fee(&mut asset_diff, quote);
                     }
 
                     let tx_status_opt = if let Some(&tx_id) = tx_ids.first() {
