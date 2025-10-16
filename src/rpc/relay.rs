@@ -3291,10 +3291,7 @@ impl RelayApiServer for Relay {
                             .populate_historical_prices(
                                 &self.inner.storage,
                                 &self.inner.chains,
-                                alloy::primitives::map::HashMap::from_iter([(
-                                    chain_id,
-                                    block_number,
-                                )]),
+                                HashMap::from_iter([(chain_id, block_number)]),
                                 &quotes,
                             )
                             .await?;

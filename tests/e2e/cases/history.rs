@@ -197,11 +197,8 @@ fn assert_asset_diffs_populated(entries: &[CallHistoryEntry]) {
 /// Helper to populate historical USD prices for bundles
 async fn populate_historical_prices(env: &Environment, _bundle_ids: &[BundleId]) -> Result<()> {
     let now = Utc::now().timestamp() as u64;
-    let (erc20_asset_uid, _) = env
-        .relay_handle
-        .chains
-        .asset(env.chain_id(), env.erc20)
-        .expect("erc20 asset should exist");
+    let (erc20_asset_uid, _) =
+        env.relay_handle.chains.asset(env.chain_id(), env.erc20).expect("erc20 asset should exist");
 
     let mut prices = Vec::new();
 
