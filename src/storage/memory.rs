@@ -892,7 +892,7 @@ impl StorageApi for InMemoryStorage {
         &self,
         queries: Vec<HistoricalPriceKey>,
     ) -> Result<HashMap<HistoricalPriceKey, (u64, f64)>> {
-        let mut result = HashMap::new();
+        let mut result = HashMap::default();
 
         // Try exact matches first
         for key in &queries {
