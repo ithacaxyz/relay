@@ -84,6 +84,15 @@ async fn test_multichain_refund() -> Result<()> {
     )
     .await?;
 
+    // Force advance sourcing chains, to cross the refund threshold
+    let mut i = 0;
+    while i < 3 {
+        sleep(Duration::from_secs(1)).await;
+        setup.env.mine_block_on_chain(0).await;
+        setup.env.mine_block_on_chain(1).await;
+        i += 1;
+    }
+
     // Force failure on the destination chain transaction and mine the block
     setup.env.provider_for(2).anvil_set_code(setup.env.orchestrator, Bytes::default()).await?;
     setup.env.mine_block_on_chain(2).await;
@@ -96,8 +105,7 @@ async fn test_multichain_refund() -> Result<()> {
         status.status
     );
 
-    // Wait for refund processing to have been triggered
-    sleep(Duration::from_secs(4)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Check that refunds have been processed.
     //
