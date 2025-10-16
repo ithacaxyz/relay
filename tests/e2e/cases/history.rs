@@ -4,14 +4,17 @@ use crate::e2e::{
     *,
 };
 use alloy::primitives::{Address, U256};
+use chrono::Utc;
 use eyre::Result;
 use relay::{
     rpc::{RelayApiClient, adjust_balance_for_decimals},
+    storage::StorageApi,
     types::{
-        Call, IERC20,
+        Call, HistoricalPrice, IERC20,
         rpc::{BundleId, CallHistoryEntry, GetCallsHistoryParameters, SortDirection},
     },
 };
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
@@ -27,8 +30,14 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     // Bundle 1: Single-chain on chain0
     let bundle1 = send_bundle(&env, &account, 0, U256::from(1)).await?;
 
+    // Sleep to ensure different timestamps for price testing
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     // Bundle 2: Single-chain on chain1
     let bundle2 = send_bundle(&env, &account, 1, U256::from(1)).await?;
+
+    // Sleep to ensure different timestamps for price testing
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Bundle 3: Interop - move more funds than available on chain1
     let bundle3 = {
@@ -52,9 +61,13 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
         send_bundle(&env, &account, 1, amount_to_send).await?
     };
 
+    populate_historical_prices(&env, &[bundle1, bundle2, bundle3]).await?;
+
     // Test 1: Fetch all history (ascending order)
     let history = get_history(&env, account.address, None, 10, SortDirection::Asc).await?;
+    assert_asset_diffs_populated(&history);
     assert_eq!(history.len(), 4, "Expected 4 bundles in history");
+
     let bundle_ids: Vec<_> = history.iter().map(|e| e.id).collect();
     assert!(bundle_ids.contains(&bundle1));
     assert!(bundle_ids.contains(&bundle2));
@@ -75,6 +88,8 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
 
     // Test 2: Fetch history in descending order
     let history_desc = get_history(&env, account.address, None, 10, SortDirection::Desc).await?;
+    assert_asset_diffs_populated(&history);
+
     assert_eq!(history_desc.len(), 4);
     // Verify it's in reverse order
     assert_eq!(history_desc[0].id, bundle3, "Most recent should be bundle3");
@@ -82,6 +97,8 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
 
     // Test 3: Limit to 2 bundles
     let history_limited = get_history(&env, account.address, None, 2, SortDirection::Asc).await?;
+    assert_asset_diffs_populated(&history);
+
     assert_eq!(history_limited.len(), 2);
     assert_eq!(history_limited[0].id, history[0].id);
     assert_eq!(history_limited[1].id, history[1].id);
@@ -89,6 +106,8 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     // Test 4: Use index to paginate (skip first 2, get next 2)
     let history_paginated =
         get_history(&env, account.address, Some(2), 2, SortDirection::Asc).await?;
+    assert_asset_diffs_populated(&history);
+
     assert_eq!(history_paginated.len(), 2);
     assert_eq!(history_paginated[0].id, history[2].id);
     assert_eq!(history_paginated[1].id, history[3].id);
@@ -155,4 +174,62 @@ async fn get_history(
         .get_calls_history(GetCallsHistoryParameters { address, index, limit, sort })
         .await
         .map_err(Into::into)
+}
+
+/// Helper to verify that asset diffs and fee totals are populated
+fn assert_asset_diffs_populated(entries: &[CallHistoryEntry]) {
+    for entry in entries {
+        let asset_diff = &entry.capabilities.asset_diff;
+
+        assert!(!asset_diff.fee_totals.is_empty());
+        assert!(!asset_diff.asset_diffs.is_empty());
+
+        for chain_diffs in asset_diff.asset_diffs.values() {
+            for (_, diffs) in &chain_diffs.0 {
+                for diff in diffs {
+                    assert!(diff.fiat.is_some(),);
+                }
+            }
+        }
+    }
+}
+
+/// Helper to populate historical USD prices for bundles
+async fn populate_historical_prices(env: &Environment, _bundle_ids: &[BundleId]) -> Result<()> {
+    let now = Utc::now().timestamp() as u64;
+    let (erc20_asset_uid, _) = env
+        .relay_handle
+        .chains
+        .asset(env.chain_id(), env.erc20)
+        .expect("erc20 asset should exist");
+
+    let mut prices = Vec::new();
+
+    let (native_asset_uid, _) = env
+        .relay_handle
+        .chains
+        .asset(env.chain_id(), Address::ZERO)
+        .expect("native asset should exist");
+
+    for asset_uid in [erc20_asset_uid, native_asset_uid] {
+        prices.push(HistoricalPrice {
+            asset_uid: asset_uid.clone(),
+            timestamp: now - 60,
+            usd_price: 1.0,
+        });
+        prices.push(HistoricalPrice {
+            asset_uid: asset_uid.clone(),
+            timestamp: now,
+            usd_price: 2.0,
+        });
+        prices.push(HistoricalPrice {
+            asset_uid: asset_uid.clone(),
+            timestamp: now + 60,
+            usd_price: 3.0,
+        });
+    }
+
+    env.relay_handle.storage.store_historical_usd_prices(prices).await?;
+
+    Ok(())
 }
