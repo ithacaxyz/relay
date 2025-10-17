@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            select\n                extract(epoch from coalesce(verified_at, created_at))::bigint as timestamp\n            from emails\n            where address = $1\n            order by verified_at is not null desc, created_at desc\n            limit 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "timestamp",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "42298767b4d0c49cbf76aa6224137b475dadd3d07e3c0c5f2e843a2bc48eaa09"
+}
