@@ -1,3 +1,5 @@
+//! Transaction simulation and gas estimation utilities.
+
 use std::collections::HashMap;
 
 use crate::{
@@ -536,7 +538,7 @@ fn decode_gas_results(output: &[u8]) -> Result<GasResults, RelayError> {
 ///    populated.
 /// 1. Logs from non-reverting calls, including ETH transfers as logs similarly to `eth_simulateV1`.
 ///    Only logs with topics are collected.
-fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, Vec<Log>) {
+pub fn collect_calls_and_logs_from_frame(root_frame: CallFrame) -> (Vec<CallFrame>, Vec<Log>) {
     let mut calls = Vec::with_capacity(1);
     let mut logs = Vec::with_capacity(32);
     let mut stack = vec![(root_frame, false)];

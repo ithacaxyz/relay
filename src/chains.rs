@@ -16,6 +16,7 @@ use alloy::{
 };
 
 use crate::{
+    asset::AssetInfoServiceHandle,
     config::{FeeConfig, RelayConfig, SimMode},
     constants::DEFAULT_POLL_INTERVAL,
     error::RelayError,
@@ -209,6 +210,7 @@ impl Chains {
         tx_signers: Vec<DynSigner>,
         storage: RelayStorage,
         config: &RelayConfig,
+        asset_info: AssetInfoServiceHandle,
     ) -> eyre::Result<Self> {
         let chains = HashMap::from_iter(
             futures_util::future::try_join_all(config.chains.iter().map(async |(chain, desc)| {
@@ -254,6 +256,7 @@ impl Chains {
                     config.transactions.clone(),
                     config.funder,
                     desc.fees.clone(),
+                    asset_info.clone(),
                 )
                 .await?;
                 tokio::spawn(service);

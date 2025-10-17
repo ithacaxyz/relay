@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT tx_id, asset_diffs FROM asset_diffs WHERE tx_id = ANY($1)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tx_id",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "asset_diffs",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "ByteaArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "4f4f8bd7f995f16a895eff8f5f0227d0f5f09b1699aa444c59b273b5a7cf4413"
+}

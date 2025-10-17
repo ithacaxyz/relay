@@ -27,7 +27,8 @@ use crate::{
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{
-        AssetUid, CreatableAccount, HistoricalPrice, HistoricalPriceKey, SignedCall, rpc::BundleId,
+        AssetDiffs, AssetUid, CreatableAccount, HistoricalPrice, HistoricalPriceKey, SignedCall,
+        rpc::BundleId,
     },
 };
 use alloy::{
@@ -1773,6 +1774,51 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
+    async fn store_asset_diffs(&self, tx_id: TxId, asset_diffs: &AssetDiffs) -> Result<()> {
+        let asset_diffs_json = serde_json::to_value(asset_diffs)
+            .map_err(|e| eyre::eyre!("Failed to serialize asset diffs: {}", e))?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO asset_diffs (tx_id, asset_diffs)
+            VALUES ($1, $2)
+            ON CONFLICT (tx_id) DO UPDATE SET asset_diffs = EXCLUDED.asset_diffs
+            "#,
+            tx_id.as_slice(),
+            asset_diffs_json,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    async fn read_asset_diffs(&self, tx_ids: Vec<TxId>) -> Result<Vec<Option<AssetDiffs>>> {
+        let tx_id_slices: Vec<Vec<u8>> = tx_ids.iter().map(|id| id.as_slice().to_vec()).collect();
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT tx_id, asset_diffs FROM asset_diffs WHERE tx_id = ANY($1)
+            "#,
+            &tx_id_slices[..]
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(eyre::Error::from)?;
+
+        let asset_diffs_map: HashMap<TxId, AssetDiffs> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let tx_id = TxId::from_slice(&row.tx_id);
+                serde_json::from_value(row.asset_diffs).ok().map(|diffs| (tx_id, diffs))
+            })
+            .collect();
+
+        Ok(tx_ids.into_iter().map(|tx_id| asset_diffs_map.get(&tx_id).cloned()).collect())
+    }
+
     async fn store_historical_usd_prices(&self, prices: Vec<HistoricalPrice>) -> Result<()> {
         if prices.is_empty() {
             return Ok(());
@@ -1800,7 +1846,6 @@ impl StorageApi for PgStorage {
         Ok(())
     }
 
-    #[instrument(skip_all)]
     async fn read_historical_usd_prices(
         &self,
         queries: Vec<HistoricalPriceKey>,

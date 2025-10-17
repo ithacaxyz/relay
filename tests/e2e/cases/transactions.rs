@@ -623,6 +623,12 @@ async fn restart_with_pending() -> eyre::Result<()> {
     // restart the service
     // increase signers capacity to make sure transactions are getting included quickly
     config.transaction_service_config.max_transactions_per_signer = 10;
+
+    // Create a minimal asset info service
+    let asset_info_service = relay::asset::AssetInfoService::new(512, &env.config);
+    let asset_info_handle = asset_info_service.handle();
+    tokio::spawn(asset_info_service);
+
     let (service, _handle) = TransactionService::new(
         provider.clone(),
         None,
@@ -631,6 +637,7 @@ async fn restart_with_pending() -> eyre::Result<()> {
         config.transaction_service_config.clone(),
         env.funder,
         FeeConfig::default(),
+        asset_info_handle,
     )
     .await
     .unwrap();

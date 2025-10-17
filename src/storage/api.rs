@@ -11,7 +11,8 @@ use crate::{
         interop::{BundleStatus, BundleWithStatus, InteropBundle},
     },
     types::{
-        CreatableAccount, HistoricalPrice, HistoricalPriceKey, Quote, SignedCall, rpc::BundleId,
+        AssetDiffs, CreatableAccount, HistoricalPrice, HistoricalPriceKey, Quote, SignedCall,
+        rpc::BundleId,
     },
 };
 use alloy::{
@@ -407,6 +408,14 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Gets total bundle count for an address (both single-chain and multi-chain).
     /// Note: This requires a full scan and should only be called when necessary.
     async fn get_bundle_count_by_address(&self, address: Address) -> Result<u64>;
+
+    /// Stores asset diffs for a confirmed transaction.
+    async fn store_asset_diffs(&self, tx_id: TxId, asset_diffs: &AssetDiffs) -> Result<()>;
+
+    /// Reads asset diffs for transactions.
+    /// Returns a vector in the same order as `tx_ids`, with `None` for transactions that have no
+    /// stored diffs.
+    async fn read_asset_diffs(&self, tx_ids: Vec<TxId>) -> Result<Vec<Option<AssetDiffs>>>;
 
     /// Stores historical USD prices for assets.
     /// Timestamps should be normalized to minute boundaries before calling this method.

@@ -127,8 +127,14 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     // setup funder signer
     let funder_signer = DynSigner::from_raw(&config.secrets.funder_key).await?;
 
+    // construct asset info service
+    let asset_info = AssetInfoService::new(512, &config);
+    let asset_info_handle = asset_info.handle();
+    tokio::spawn(asset_info);
+
     // build chains
-    let chains = Arc::new(Chains::new(signers, storage.clone(), &config).await?);
+    let chains =
+        Arc::new(Chains::new(signers, storage.clone(), &config, asset_info_handle.clone()).await?);
 
     // Run pre-flight diagnostics
     if skip_diagnostics {
@@ -160,11 +166,6 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
     } else {
         price_oracle.spawn_fetcher(PriceFetcher::CoinGecko, &config);
     }
-
-    // construct asset info service
-    let asset_info = AssetInfoService::new(512, &config);
-    let asset_info_handle = asset_info.handle();
-    tokio::spawn(asset_info);
 
     // get contract versions from chain.
     let contracts = VersionedContracts::new(

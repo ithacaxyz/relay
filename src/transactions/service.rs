@@ -4,6 +4,7 @@ use super::{
     transaction::{RelayTransaction, TransactionStatus},
 };
 use crate::{
+    asset::AssetInfoServiceHandle,
     config::{FeeConfig, TransactionServiceConfig},
     error::StorageError,
     signers::DynSigner,
@@ -150,12 +151,15 @@ pub struct TransactionService {
     storage: RelayStorage,
     /// Set of spawned tasks that are terminated when the service is dropped.
     tasks: JoinSet<Result<(), StorageError>>,
+    /// Handle to the asset info service.
+    asset_info: AssetInfoServiceHandle,
 }
 
 impl TransactionService {
     /// Creates a new [`TransactionService`].
     ///
     /// This also spawns dedicated [`Signer`] task for each configured signer.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         provider: DynProvider,
         flashblocks_rpc_endpoint: Option<&Url>,
@@ -164,6 +168,7 @@ impl TransactionService {
         config: TransactionServiceConfig,
         funder: Address,
         fees: FeeConfig,
+        asset_info: AssetInfoServiceHandle,
     ) -> eyre::Result<(Self, TransactionServiceHandle)> {
         let chain_id = provider.get_chain_id().await?;
         let metrics = Arc::new(TransactionServiceMetrics::new_with_labels(&[(
@@ -195,6 +200,7 @@ impl TransactionService {
             config,
             tasks: JoinSet::new(),
             storage: storage.clone(),
+            asset_info,
         };
 
         // create all the signers
@@ -238,6 +244,7 @@ impl TransactionService {
             monitor,
             funder,
             fees,
+            self.asset_info.clone(),
         )
         .await?;
         let (task, loaded_transactions) = signer.into_future().await?;

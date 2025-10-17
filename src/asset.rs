@@ -3,9 +3,8 @@ use crate::{
     config::RelayConfig,
     error::{AssetError, RelayError},
     types::{
-        Asset, AssetDiffs, AssetMetadata, AssetWithInfo,
-        IERC20::{self, IERC20Events},
-        IERC721::{self, IERC721Events},
+        Asset, AssetDiffs, AssetMetadata, AssetWithInfo, IERC20, IERC721,
+        simulation_assets::AssetDiffsBuilder,
     },
 };
 use alloy::{
@@ -15,7 +14,7 @@ use alloy::{
         bindings::IMulticall3::{self, Call3, Result as Result3, aggregate3Call},
     },
     rpc::types::{TransactionRequest, state::StateOverride},
-    sol_types::{SolCall, SolEventInterface},
+    sol_types::SolCall,
     transports::TransportErrorKind,
 };
 use schnellru::{ByLength, LruMap};
@@ -129,14 +128,7 @@ impl AssetInfoServiceHandle {
             return Ok(HashMap::default());
         }
 
-        let nft_calls = nfts
-            .iter()
-            .map(|(asset, id)| Call3 {
-                target: *asset,
-                allowFailure: true,
-                callData: IERC721::tokenURICall { id: *id }.abi_encode().into(),
-            })
-            .collect::<Vec<_>>();
+        let nft_calls = build_token_uri_calls(&nfts);
 
         // Execute transaction with tokenURI calls before and after
         // 1. Pre-transaction tokenURI calls (for burned tokens)
@@ -179,25 +171,7 @@ impl AssetInfoServiceHandle {
         logs: &[Log],
         provider: &P,
     ) -> Result<AssetDiffs, RelayError> {
-        let mut builder = AssetDiffs::builder();
-        for log in logs {
-            // ERC-20
-            if let Some((asset, transfer)) =
-                IERC20Events::decode_log(log).ok().map(|ev| match ev.data {
-                    IERC20Events::Transfer(t) => (Asset::from(log.address), t),
-                })
-            {
-                builder.record_erc20(asset, transfer);
-            }
-            // ERC-721
-            else if let Some((asset, transfer)) =
-                IERC721Events::decode_log(log).ok().map(|ev| match ev.data {
-                    IERC721Events::Transfer(t) => (Asset::from(log.address), t),
-                })
-            {
-                builder.record_erc721(asset, transfer);
-            }
-        }
+        let builder = AssetDiffsBuilder::from_logs(logs);
 
         // fetch assets metadata
         let (mut metadata, tokens_uris) = try_join!(
@@ -339,12 +313,23 @@ impl Future for AssetInfoService {
 }
 
 /// Helper function to decode tokenURI from multicall result
-fn decode_token_uri(result: &IMulticall3::Result) -> Option<String> {
+pub fn decode_token_uri(result: &IMulticall3::Result) -> Option<String> {
     if result.success && !result.returnData.is_empty() {
         IERC721::tokenURICall::abi_decode_returns(&result.returnData).ok()
     } else {
         None
     }
+}
+
+/// Builds multicall Call3 structs for tokenURI queries.
+fn build_token_uri_calls(nfts: &[(Address, U256)]) -> Vec<Call3> {
+    nfts.iter()
+        .map(|(asset, id)| Call3 {
+            target: *asset,
+            allowFailure: true,
+            callData: IERC721::tokenURICall { id: *id }.abi_encode().into(),
+        })
+        .collect()
 }
 
 /// Parses asset info results from multicall response.
@@ -402,7 +387,7 @@ fn parse_asset_info_results(
 /// 2. Query token info.
 ///
 /// This is similar to how [`AssetInfoServiceHandle::get_erc721_uris`] handles NFT mints.
-async fn get_info<P: Provider>(
+pub async fn get_info<P: Provider>(
     provider: &P,
     assets: Vec<Address>,
     with_prestate: Option<(&TransactionRequest, StateOverride)>,
@@ -501,4 +486,37 @@ async fn simulate_with_multicall<P: Provider>(
     }
 
     Ok(results)
+}
+
+/// Fetches NFT token URIs for confirmed transactions without state overrides.
+///
+/// This is a simpler version of [`AssetInfoServiceHandle::get_erc721_uris`] that doesn't require
+/// simulation with state overrides since we're fetching URIs from already-confirmed transactions.
+pub async fn fetch_nft_uris<P: Provider>(
+    provider: &P,
+    nfts: &[(Address, U256)],
+) -> Result<HashMap<(Address, U256), Option<String>>, RelayError> {
+    if nfts.is_empty() {
+        return Ok(HashMap::default());
+    }
+
+    let calls = build_token_uri_calls(nfts);
+
+    let call_data = aggregate3Call { calls }.abi_encode();
+    let tx_request = TransactionRequest::default().to(MULTICALL3_ADDRESS).input(call_data.into());
+
+    let results = provider
+        .call(tx_request)
+        .await
+        .map_err(|e| TransportErrorKind::custom_str(&format!("multicall3 failed: {e}")))?;
+
+    let decoded = aggregate3Call::abi_decode_returns(&results).map_err(|e| {
+        TransportErrorKind::custom_str(&format!("failed to decode multicall3 results: {e}"))
+    })?;
+
+    Ok(nfts
+        .iter()
+        .enumerate()
+        .map(|(i, (asset, id))| ((*asset, *id), decode_token_uri(&decoded[i])))
+        .collect())
 }

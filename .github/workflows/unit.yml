@@ -45,8 +45,6 @@ jobs:
 
       - name: Install foundry
         uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

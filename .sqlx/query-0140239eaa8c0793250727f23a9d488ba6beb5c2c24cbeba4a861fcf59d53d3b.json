@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO asset_diffs (tx_id, asset_diffs)\n            VALUES ($1, $2)\n            ON CONFLICT (tx_id) DO UPDATE SET asset_diffs = EXCLUDED.asset_diffs\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0140239eaa8c0793250727f23a9d488ba6beb5c2c24cbeba4a861fcf59d53d3b"
+}

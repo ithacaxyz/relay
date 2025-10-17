@@ -7,7 +7,7 @@ pub use account::*;
 mod asset;
 pub use asset::*;
 
-mod simulation_assets;
+pub mod simulation_assets;
 pub use simulation_assets::*;
 
 mod contracts;
@@ -55,7 +55,7 @@ pub use call::*;
 mod webauthn;
 pub use webauthn::*;
 
-mod simulator;
+pub mod simulator;
 pub use simulator::*;
 
 mod storage;
