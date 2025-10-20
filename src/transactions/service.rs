@@ -159,7 +159,7 @@ impl TransactionService {
     /// Creates a new [`TransactionService`].
     ///
     /// This also spawns dedicated [`Signer`] task for each configured signer.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn new(
         provider: DynProvider,
         flashblocks_rpc_endpoint: Option<&Url>,
