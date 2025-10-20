@@ -162,8 +162,13 @@ pub trait StorageApi: Debug + Send + Sync {
     /// Returns true if the email was verified successfully.
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool>;
 
-    /// Checks if a phone number is already verified for any account.
-    async fn verified_phone_exists(&self, phone: &str) -> Result<bool>;
+    /// Gets the verified_at timestamp for a phone number if it's verified for that specific
+    /// account.
+    async fn get_phone_verified_at(
+        &self,
+        phone: &str,
+        account: Address,
+    ) -> Result<Option<DateTime<Utc>>>;
 
     /// Adds an unverified phone number for an account with a Twilio verification SID.
     async fn add_unverified_phone(
