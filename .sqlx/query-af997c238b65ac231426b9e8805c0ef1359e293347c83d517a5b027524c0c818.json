@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select verified_at from phones where phone = $1 and ($2::bytea is null or address = $2) and verified_at is not null order by verified_at desc limit 1",
+  "query": "select verified_at from phones where phone = $1 and address = $2 and verified_at is not null order by verified_at desc limit 1",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       true
     ]
   },
-  "hash": "acd0685f69c92cad5bb4b92452fe603c71bde04e9a8dca20c8bca4ad0f2a1dd3"
+  "hash": "af997c238b65ac231426b9e8805c0ef1359e293347c83d517a5b027524c0c818"
 }

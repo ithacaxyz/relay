@@ -737,12 +737,12 @@ impl StorageApi for PgStorage {
     async fn get_phone_verified_at(
         &self,
         phone: &str,
-        account: Option<Address>,
+        account: Address,
     ) -> Result<Option<DateTime<Utc>>> {
         let row = sqlx::query!(
-            "select verified_at from phones where phone = $1 and ($2::bytea is null or address = $2) and verified_at is not null order by verified_at desc limit 1",
+            "select verified_at from phones where phone = $1 and address = $2 and verified_at is not null order by verified_at desc limit 1",
             phone,
-            account.as_ref().map(|a| a.as_slice())
+            account.as_slice()
         )
         .fetch_optional(&self.pool)
         .await

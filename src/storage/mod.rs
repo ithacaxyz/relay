@@ -139,7 +139,7 @@ impl StorageApi for RelayStorage {
     async fn get_phone_verified_at(
         &self,
         phone: &str,
-        account: Option<Address>,
+        account: Address,
     ) -> api::Result<Option<DateTime<Utc>>> {
         self.inner.get_phone_verified_at(phone, account).await
     }
@@ -520,13 +520,9 @@ mod tests {
         storage.mark_phone_verified(account1, phone).await.unwrap();
 
         let first_verified_at =
-            storage.get_phone_verified_at(phone, Some(account1)).await.unwrap().unwrap();
-        assert!(storage.get_phone_verified_at(phone, Some(account1)).await.unwrap().is_some());
-        assert!(storage.get_phone_verified_at(phone, Some(account2)).await.unwrap().is_none());
-        assert_eq!(
-            storage.get_phone_verified_at(phone, None).await.unwrap().unwrap(),
-            first_verified_at
-        );
+            storage.get_phone_verified_at(phone, account1).await.unwrap().unwrap();
+        assert!(storage.get_phone_verified_at(phone, account1).await.unwrap().is_some());
+        assert!(storage.get_phone_verified_at(phone, account2).await.unwrap().is_none());
 
         // Wait to ensure different timestamp
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -535,22 +531,18 @@ mod tests {
         storage.add_unverified_phone(account2, phone, "sid2").await.unwrap();
         storage.mark_phone_verified(account2, phone).await.unwrap();
         let second_verified_at =
-            storage.get_phone_verified_at(phone, Some(account2)).await.unwrap().unwrap();
+            storage.get_phone_verified_at(phone, account2).await.unwrap().unwrap();
 
         assert!(second_verified_at > first_verified_at);
         assert_eq!(
-            storage.get_phone_verified_at(phone, None).await.unwrap().unwrap(),
-            second_verified_at
-        );
-        assert_eq!(
-            storage.get_phone_verified_at(phone, Some(account1)).await.unwrap().unwrap(),
+            storage.get_phone_verified_at(phone, account1).await.unwrap().unwrap(),
             first_verified_at
         );
         assert_eq!(
-            storage.get_phone_verified_at(phone, Some(account2)).await.unwrap().unwrap(),
+            storage.get_phone_verified_at(phone, account2).await.unwrap().unwrap(),
             second_verified_at
         );
 
-        assert!(storage.get_phone_verified_at("+9999999999", None).await.unwrap().is_none());
+        assert!(storage.get_phone_verified_at("+9999999999", account1).await.unwrap().is_none());
     }
 }

@@ -248,22 +248,10 @@ impl StorageApi for InMemoryStorage {
     async fn get_phone_verified_at(
         &self,
         phone: &str,
-        account: Option<Address>,
+        account: Address,
     ) -> Result<Option<DateTime<Utc>>> {
-        if let Some(account) = account {
-            let key = PhoneKey { account, phone: phone.to_string() };
-            return Ok(self.verified_phones.get(&key).map(|entry| *entry.value()));
-        }
-
-        let mut most_recent: Option<DateTime<Utc>> = None;
-        for entry in self.verified_phones.iter() {
-            if entry.key().phone == phone {
-                let verified_at = *entry.value();
-                most_recent =
-                    Some(most_recent.map_or(verified_at, |current| current.max(verified_at)));
-            }
-        }
-        Ok(most_recent)
+        let key = PhoneKey { account, phone: phone.to_string() };
+        Ok(self.verified_phones.get(&key).map(|entry| *entry.value()))
     }
 
     async fn add_unverified_phone(
@@ -274,6 +262,7 @@ impl StorageApi for InMemoryStorage {
     ) -> Result<()> {
         let key = PhoneKey { account, phone: phone.to_string() };
         let value = UnverifiedPhone { verification_sid: verification_sid.to_string(), attempts: 0 };
+        self.verified_phones.remove(&key);
         self.unverified_phones.insert(key, value);
         Ok(())
     }

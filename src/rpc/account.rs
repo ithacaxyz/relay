@@ -239,7 +239,9 @@ impl AccountApiServer for AccountRpc {
     ) -> RpcResult<()> {
         let client = self.ensure_twilio_client()?;
 
-        if let Some(verified_at) = self.storage.get_phone_verified_at(&phone, None).await? {
+        if let Some(verified_at) =
+            self.storage.get_phone_verified_at(&phone, wallet_address).await?
+        {
             // Allow re-verification if verified more than 60 days ago
             if (Utc::now() - verified_at).num_days() < 60 {
                 return Err(PhoneError::PhoneAlreadyVerified.into());
@@ -301,7 +303,7 @@ impl AccountApiServer for AccountRpc {
         let client = self.ensure_twilio_client()?;
 
         // Check if phone is already verified for this account
-        if self.storage.get_phone_verified_at(&phone, Some(wallet_address)).await?.is_some() {
+        if self.storage.get_phone_verified_at(&phone, wallet_address).await?.is_some() {
             return Err(PhoneError::PhoneAlreadyVerified.into());
         }
 
