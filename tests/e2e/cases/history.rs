@@ -10,7 +10,7 @@ use relay::{
     rpc::{RelayApiClient, adjust_balance_for_decimals},
     storage::StorageApi,
     types::{
-        Call, HistoricalPrice, IERC20,
+        Call, DiffDirection, HistoricalPrice, IERC20,
         rpc::{BundleId, CallHistoryEntry, GetCallsHistoryParameters, SortDirection},
     },
 };
@@ -28,13 +28,13 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
     mint_erc20s(&[env.erc20], &[account.address], env.provider_for(1)).await?;
 
     // Bundle 1: Single-chain on chain0
-    let bundle1 = send_bundle(&env, &account, 0, U256::from(1)).await?;
+    let bundle1 = send_bundle(&env, &account, 0, U256::from(1), env.erc20).await?;
 
     // Sleep to ensure different timestamps for price testing
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Bundle 2: Single-chain on chain1
-    let bundle2 = send_bundle(&env, &account, 1, U256::from(1)).await?;
+    let bundle2 = send_bundle(&env, &account, 1, U256::from(1), env.erc20).await?;
 
     // Sleep to ensure different timestamps for price testing
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -58,7 +58,7 @@ async fn test_multichain_calls_history_mixed_bundles() -> Result<()> {
         // Try to send on chain1: chain1_balance + half of chain0_balance (requires cross-chain)
         let amount_to_send = balance_chain1 + (balance_chain0_adjusted / U256::from(2));
 
-        send_bundle(&env, &account, 1, amount_to_send).await?
+        send_bundle(&env, &account, 1, amount_to_send, env.erc20).await?
     };
 
     populate_historical_prices(&env, &[bundle1, bundle2, bundle3]).await?;
@@ -133,6 +133,7 @@ async fn send_bundle(
     account: &MockAccount,
     chain_idx: usize,
     amount: U256,
+    fee_token: Address,
 ) -> Result<BundleId> {
     let response = env
         .relay_endpoint
@@ -141,7 +142,7 @@ async fn send_bundle(
             chain_id: env.chain_id_for(chain_idx),
             from: Some(account.address),
             capabilities: PrepareCallsCapabilities {
-                meta: Meta { fee_token: Some(env.erc20), ..Default::default() },
+                meta: Meta { fee_token: Some(fee_token), ..Default::default() },
                 ..Default::default()
             },
             key: Some(account.key.to_call_key()),
@@ -192,6 +193,53 @@ fn assert_asset_diffs_populated(entries: &[CallHistoryEntry]) {
             }
         }
     }
+}
+
+/// Test that verifies exact asset diff values match on-chain execution with the correct payer fee
+/// removed (only the transfer amount should show up).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_calls_history_exact_asset_diffs() -> Result<()> {
+    let env = Environment::setup().await?;
+    let account = MockAccountBuilder::new().build(&env).await?;
+    let transfer_amount = U256::from(1000);
+    let bundle_id = send_bundle(&env, &account, 0, transfer_amount, env.erc20).await?;
+    populate_historical_prices(&env, &[bundle_id]).await?;
+
+    let history = get_history(&env, account.address, None, 10, SortDirection::Asc).await?;
+    let entry = history.iter().find(|e| e.id == bundle_id).unwrap();
+
+    let quote = &entry.capabilities.quotes[0];
+    let eoa_diffs = entry
+        .capabilities
+        .asset_diff
+        .asset_diffs
+        .get(&quote.chain_id)
+        .unwrap()
+        .0
+        .iter()
+        .find(|(addr, _)| addr == &account.address)
+        .map(|(_, diffs)| diffs)
+        .unwrap();
+
+    let erc20_diff =
+        eoa_diffs.iter().find(|d| d.address == Some(env.erc20)).expect("ERC20 diff should exist");
+
+    assert_eq!(erc20_diff.value, transfer_amount,); // fee got removed correctly
+    assert_eq!(erc20_diff.direction, DiffDirection::Outgoing,);
+    assert!(!erc20_diff.recipients.is_empty(),);
+    assert!(erc20_diff.fiat.is_some());
+
+    let fee_total_price = entry
+        .capabilities
+        .asset_diff
+        .fee_totals
+        .get(&quote.chain_id)
+        .expect("Fee total should exist for chain");
+
+    assert!(fee_total_price.value > 0.0,);
+    assert_eq!(fee_total_price.currency, "usd",);
+
+    Ok(())
 }
 
 /// Helper to populate historical USD prices for bundles
