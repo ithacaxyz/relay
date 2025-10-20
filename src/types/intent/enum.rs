@@ -551,6 +551,17 @@ impl Intent {
             .into()
     }
 
+    /// Decodes an intent from calldata for [`OrchestratorContract::executeCall`].
+    pub fn decode_execute(calldata: &[u8]) -> Result<Self, alloy::sol_types::Error> {
+        let execute_call = OrchestratorContract::executeCall::abi_decode(calldata)?;
+
+        if let Ok(intent) = IntentV05::abi_decode(&execute_call.encodedIntent) {
+            return Ok(Intent::V05(intent));
+        }
+
+        Ok(Intent::V04(IntentV04::abi_decode(&execute_call.encodedIntent)?))
+    }
+
     /// Adds a mocked merkle signature for fee estimation purposes.
     ///
     /// This creates a merkle tree with random leaves except for the current intent's position,

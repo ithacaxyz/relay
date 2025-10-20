@@ -65,6 +65,14 @@ impl RelayTransactionKind {
     pub fn is_intent_for(&self, address: Address) -> bool {
         matches!(self, Self::Intent { quote, .. } if *quote.intent.eoa() == address)
     }
+
+    /// Returns the quote if this is an Intent transaction.
+    pub fn quote_ref(&self) -> Option<&Quote> {
+        match self {
+            Self::Intent { quote, .. } => Some(quote),
+            Self::Internal { .. } => None,
+        }
+    }
 }
 
 /// Transaction type used by relay.
