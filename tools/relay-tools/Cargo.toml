@@ -57,7 +57,7 @@ rand = "0.9"
 relay = { path = "../.." }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.39", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2.5"
