@@ -7,6 +7,7 @@ use super::{
     },
 };
 use crate::{
+    asset::AssetInfoServiceHandle,
     config::{FeeConfig, TransactionServiceConfig},
     error::StorageError,
     signers::DynSigner,
@@ -14,7 +15,7 @@ use crate::{
     transactions::{PullGasState, transaction::RelayTransactionKind},
     transport::error::TransportErrExt,
     types::{
-        IFunder, ORCHESTRATOR_NO_ERROR,
+        AssetDiffs, IFunder, ORCHESTRATOR_NO_ERROR,
         OrchestratorContract::{self, IntentExecuted},
         generate_cast_call_command,
     },
@@ -161,6 +162,8 @@ pub struct SignerInner {
     funder: Address,
     /// Fee settings for the network this signer supports.
     fees: FeeConfig,
+    /// Handle to the asset info service.
+    asset_info: AssetInfoServiceHandle,
 }
 
 /// A signer responsible for signing and sending transactions on a _single_ network.
@@ -184,6 +187,7 @@ impl Signer {
         monitor: TransactionMonitoringHandle,
         funder: Address,
         fees: FeeConfig,
+        asset_info: AssetInfoServiceHandle,
     ) -> eyre::Result<Self> {
         let address = signer.address();
         let wallet = EthereumWallet::new(signer.0);
@@ -229,6 +233,7 @@ impl Signer {
             monitor,
             funder,
             fees,
+            asset_info,
         };
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -301,9 +306,27 @@ impl Signer {
             .total_wait_time
             .record(Utc::now().signed_duration_since(tx.tx.received_at).num_milliseconds() as f64);
 
-        // Spawn a task to record metrics.
+        // Spawn a task to record metrics and updated asset diffs.
         let this = self.clone();
-        tokio::spawn(async move { this.record_confirmed_metrics(tx, receipt).await });
+        tokio::spawn(async move {
+            let tx_hash = receipt.transaction_hash;
+            let tx_id = tx.id();
+            this.record_confirmed_metrics(tx, receipt).await;
+
+            let Ok(asset_diffs) =
+                AssetDiffs::from_trace_transaction(&this.provider, tx_hash, &this.asset_info).await
+            else {
+                error!(?tx_hash, "Failed to extract asset diffs from transaction trace");
+                return;
+            };
+
+            if let Err(e) = this.storage.store_asset_diffs(tx_id, &asset_diffs).await {
+                error!(?e, ?tx_hash, "Failed to store asset diffs for confirmed transaction");
+                return;
+            }
+
+            debug!(?tx_hash, "Asset diffs stored successfully");
+        });
 
         Ok(())
     }
