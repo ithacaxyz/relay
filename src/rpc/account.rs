@@ -2,6 +2,7 @@
 
 use alloy::primitives::keccak256;
 use async_trait::async_trait;
+use chrono::Utc;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use rand::{Rng, distr::Alphanumeric};
 use resend_rs::{Resend, types::CreateEmailBaseOptions};
@@ -238,9 +239,13 @@ impl AccountApiServer for AccountRpc {
     ) -> RpcResult<()> {
         let client = self.ensure_twilio_client()?;
 
-        // Check if phone is already verified
-        if self.storage.verified_phone_exists(&phone).await? {
-            return Err(PhoneError::PhoneAlreadyVerified.into());
+        if let Some(verified_at) =
+            self.storage.get_phone_verified_at(&phone, wallet_address).await?
+        {
+            // Allow re-verification if verified more than 60 days ago
+            if (Utc::now() - verified_at).num_days() < 60 {
+                return Err(PhoneError::PhoneAlreadyVerified.into());
+            }
         }
 
         // Check line type to prevent VoIP numbers
@@ -297,8 +302,8 @@ impl AccountApiServer for AccountRpc {
     ) -> RpcResult<()> {
         let client = self.ensure_twilio_client()?;
 
-        // Check if phone is already verified
-        if self.storage.verified_phone_exists(&phone).await? {
+        // Check if phone is already verified for this account
+        if self.storage.get_phone_verified_at(&phone, wallet_address).await?.is_some() {
             return Err(PhoneError::PhoneAlreadyVerified.into());
         }
 

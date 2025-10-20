@@ -735,17 +735,21 @@ impl StorageApi for PgStorage {
     }
 
     #[instrument(skip_all)]
-    async fn verified_phone_exists(&self, phone: &str) -> Result<bool> {
-        let exists = sqlx::query!(
-            "select * from phones where phone = $1 and verified_at is not null",
-            phone
+    async fn get_phone_verified_at(
+        &self,
+        phone: &str,
+        account: Address,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let row = sqlx::query!(
+            "select verified_at from phones where phone = $1 and address = $2 and verified_at is not null order by verified_at desc limit 1",
+            phone,
+            account.as_slice()
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(eyre::Error::from)?
-        .is_some();
+        .map_err(eyre::Error::from)?;
 
-        Ok(exists)
+        Ok(row.and_then(|r| r.verified_at.map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))))
     }
 
     #[instrument(skip_all)]
@@ -756,8 +760,8 @@ impl StorageApi for PgStorage {
         verification_sid: &str,
     ) -> Result<()> {
         sqlx::query!(
-            "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0) 
-             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, created_at = now()",
+            "insert into phones (address, phone, verification_sid, attempts) values ($1, $2, $3, 0)
+             on conflict(address, phone) do update set verification_sid = $3, attempts = 0, verified_at = null, created_at = now()",
             account.as_slice(),
             phone,
             verification_sid,
@@ -840,7 +844,14 @@ impl StorageApi for PgStorage {
         account: Address,
     ) -> Result<OnrampVerificationStatus> {
         let email_row = sqlx::query!(
-            "select extract(epoch from verified_at)::bigint as verified_at from emails where address = $1 and verified_at is not null",
+            r#"
+            select
+                extract(epoch from coalesce(verified_at, created_at))::bigint as timestamp
+            from emails
+            where address = $1
+            order by verified_at is not null desc, created_at desc
+            limit 1
+            "#,
             account.as_slice()
         )
         .fetch_optional(&self.pool)
@@ -856,7 +867,7 @@ impl StorageApi for PgStorage {
         .map_err(eyre::Error::from)?;
 
         Ok(OnrampVerificationStatus {
-            email: email_row.and_then(|r| r.verified_at.map(|v| v as u64)),
+            email: email_row.and_then(|r| r.timestamp.map(|v| v as u64)),
             phone: phone_row.and_then(|r| r.verified_at.map(|v| v as u64)),
         })
     }

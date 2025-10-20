@@ -39,6 +39,13 @@ struct PhoneKey {
     phone: String,
 }
 
+/// Value for unverified email storage
+#[derive(Debug, Clone)]
+struct UnverifiedEmail {
+    token: String,
+    created_at: DateTime<Utc>,
+}
+
 /// Value for unverified phone storage
 #[derive(Debug, Clone)]
 struct UnverifiedPhone {
@@ -49,13 +56,6 @@ struct UnverifiedPhone {
 /// Value for verified email storage
 #[derive(Debug, Clone)]
 struct VerifiedEmail {
-    account: Address,
-    verified_at: DateTime<Utc>,
-}
-
-/// Value for verified phone storage
-#[derive(Debug, Clone)]
-struct VerifiedPhone {
     account: Address,
     verified_at: DateTime<Utc>,
 }
@@ -93,10 +93,10 @@ pub struct InMemoryStorage {
     bundles: DashMap<BundleId, Vec<TxId>>,
     queued_transactions: DashMap<ChainId, Vec<RelayTransaction>>,
     transactions_by_address: DashMap<Address, Vec<RelayTransaction>>,
-    unverified_emails: DashMap<(Address, String), String>,
+    unverified_emails: DashMap<(Address, String), UnverifiedEmail>,
     verified_emails: DashMap<String, VerifiedEmail>,
     unverified_phones: DashMap<PhoneKey, UnverifiedPhone>,
-    verified_phones: DashMap<String, VerifiedPhone>,
+    verified_phones: DashMap<PhoneKey, DateTime<Utc>>,
     pending_bundles: DashMap<BundleId, BundleWithStatusAndTime>,
     finished_bundles: DashMap<BundleId, BundleWithStatusAndTime>,
     pending_refunds: DashMap<BundleId, DateTime<Utc>>,
@@ -227,18 +227,18 @@ impl StorageApi for InMemoryStorage {
     }
 
     async fn add_unverified_email(&self, account: Address, email: &str, token: &str) -> Result<()> {
-        self.unverified_emails.insert((account, email.to_string()), token.to_string());
+        self.unverified_emails.insert(
+            (account, email.to_string()),
+            UnverifiedEmail { token: token.to_string(), created_at: Utc::now() },
+        );
 
         Ok(())
     }
 
     async fn verify_email(&self, account: Address, email: &str, token: &str) -> Result<bool> {
         let key = (account, email.to_string());
-        let valid = self
-            .unverified_emails
-            .get(&key)
-            .map(|expected_token| token == *expected_token)
-            .unwrap_or_default();
+        let valid =
+            self.unverified_emails.get(&key).map(|entry| token == entry.token).unwrap_or_default();
 
         if valid {
             self.unverified_emails.remove(&key);
@@ -249,8 +249,13 @@ impl StorageApi for InMemoryStorage {
         Ok(valid)
     }
 
-    async fn verified_phone_exists(&self, phone: &str) -> Result<bool> {
-        Ok(self.verified_phones.contains_key(phone))
+    async fn get_phone_verified_at(
+        &self,
+        phone: &str,
+        account: Address,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let key = PhoneKey { account, phone: phone.to_string() };
+        Ok(self.verified_phones.get(&key).map(|entry| *entry.value()))
     }
 
     async fn add_unverified_phone(
@@ -261,6 +266,7 @@ impl StorageApi for InMemoryStorage {
     ) -> Result<()> {
         let key = PhoneKey { account, phone: phone.to_string() };
         let value = UnverifiedPhone { verification_sid: verification_sid.to_string(), attempts: 0 };
+        self.verified_phones.remove(&key);
         self.unverified_phones.insert(key, value);
         Ok(())
     }
@@ -268,8 +274,7 @@ impl StorageApi for InMemoryStorage {
     async fn mark_phone_verified(&self, account: Address, phone: &str) -> Result<()> {
         let key = PhoneKey { account, phone: phone.to_string() };
         self.unverified_phones.remove(&key);
-        self.verified_phones
-            .insert(phone.to_string(), VerifiedPhone { account, verified_at: Utc::now() });
+        self.verified_phones.insert(key, Utc::now());
         Ok(())
     }
 
@@ -307,14 +312,23 @@ impl StorageApi for InMemoryStorage {
         &self,
         account: Address,
     ) -> Result<OnrampVerificationStatus> {
+        let email = self
+            .verified_emails
+            .iter()
+            .find_map(|entry| {
+                (entry.value().account == account)
+                    .then(|| entry.value().verified_at.timestamp() as u64)
+            })
+            .or_else(|| {
+                self.unverified_emails.iter().find_map(|entry| {
+                    (entry.key().0 == account).then(|| entry.value().created_at.timestamp() as u64)
+                })
+            });
+
         Ok(OnrampVerificationStatus {
-            email: self.verified_emails.iter().find_map(|entry| {
-                (entry.value().account == account)
-                    .then(|| entry.value().verified_at.timestamp() as u64)
-            }),
+            email,
             phone: self.verified_phones.iter().find_map(|entry| {
-                (entry.value().account == account)
-                    .then(|| entry.value().verified_at.timestamp() as u64)
+                (entry.key().account == account).then(|| entry.value().timestamp() as u64)
             }),
         })
     }
@@ -336,8 +350,8 @@ impl StorageApi for InMemoryStorage {
             });
 
         let phone_entry = self.verified_phones.iter().find_map(|entry| {
-            (entry.value().account == account)
-                .then(|| (entry.key().clone(), entry.value().verified_at.timestamp() as u64))
+            (entry.key().account == account)
+                .then(|| (entry.key().phone.clone(), entry.value().timestamp() as u64))
         });
 
         Ok(OnrampContactInfo {
