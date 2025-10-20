@@ -13,8 +13,8 @@ use crate::{
     storage::BundleHistoryEntry,
     transactions::{RelayTransactionKind, interop::InteropBundle},
     types::{
-        Account, Asset, AssetDeficit, AssetDiffResponse, AssetMetadataWithPrice, AssetPrice,
-        AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
+        Account, Asset, AssetDeficit, AssetDiffResponse, AssetDiffs, AssetMetadataWithPrice,
+        AssetPrice, AssetType, Call, ChainAssetDiffs, DelegationStatus, Escrow, FundSource,
         FundingIntentContext, GasEstimate, Health, IERC20, IEscrow, IntentKey, IntentKind, Intents,
         Key, MULTICHAIN_NONCE_PREFIX, MerkleLeafInfo,
         OrchestratorContract::{self, IntentExecuted},
@@ -34,7 +34,7 @@ use crate::{
     version::RELAY_SHORT_VERSION,
 };
 use alloy::{
-    consensus::{TxEip1559, TxEip7702},
+    consensus::{Transaction, TxEip1559, TxEip7702},
     eips::{eip1559::Eip1559Estimation, eip7702::SignedAuthorization},
     primitives::{
         Address, B256, BlockNumber, Bytes, ChainId, TxKind, U64, U256,
@@ -48,7 +48,7 @@ use alloy::{
     sol_types::{SolCall, SolValue},
 };
 use alloy_chains::NamedChain;
-use futures::{StreamExt, stream::FuturesOrdered};
+use futures::{StreamExt, future::join_all, stream::FuturesOrdered};
 use futures_util::{TryStreamExt, future::try_join_all, join, stream::FuturesUnordered};
 use itertools::Itertools;
 use jsonrpsee::{
@@ -3113,16 +3113,12 @@ impl RelayApiServer for Relay {
             let index: u64 = offset + idx as u64;
 
             // Helper to remove fee from asset diffs to avoid confusing the user
-            let remove_fee = |asset_diff: &mut AssetDiffResponse, quote: &Quote| {
-                if let Some(diffs) = asset_diff.asset_diffs.get_mut(&quote.chain_id) {
+            let remove_fee = |diffs: Option<&mut AssetDiffs>, intent: &Intent| {
+                if let Some(diffs) = diffs {
                     diffs.remove_payer_fee(
-                        if quote.intent.payer().is_zero() {
-                            *quote.intent.eoa()
-                        } else {
-                            quote.intent.payer()
-                        },
-                        quote.intent.payment_token().into(),
-                        quote.intent.total_payment_amount(),
+                        if intent.payer().is_zero() { *intent.eoa() } else { intent.payer() },
+                        intent.payment_token().into(),
+                        intent.total_payment_amount(),
                     );
                 }
             };
@@ -3210,8 +3206,22 @@ impl RelayApiServer for Relay {
                         }
                     }
 
-                    for quote in &quotes {
-                        remove_fee(&mut asset_diff, quote);
+                    let intents = join_all(
+                        bundle.src_txs.iter().chain(bundle.dst_txs.iter()).enumerate().map(
+                            |(idx, tx)| {
+                                self.resolve_intent(
+                                    tx.kind.chain_id(),
+                                    tx_statuses.get(idx).and_then(|s| s.as_ref()).map(|(_, s)| s),
+                                    tx.kind.quote_ref(),
+                                )
+                            },
+                        ),
+                    )
+                    .await;
+
+                    // Remove fees for all decoded intents
+                    for (chain_id, intent) in intents.into_iter().flatten() {
+                        remove_fee(asset_diff.asset_diffs.get_mut(&chain_id), &intent);
                     }
 
                     asset_diff
@@ -3273,15 +3283,22 @@ impl RelayApiServer for Relay {
                         asset_diff.asset_diffs.entry(chain_id).or_insert(diffs);
                     }
 
-                    if let Some(quote) = &quote {
-                        remove_fee(&mut asset_diff, quote);
-                    }
-
                     let tx_status_opt = if let Some(&tx_id) = tx_ids.first() {
                         self.inner.storage.read_transaction_status(tx_id).await?
                     } else {
                         None
                     };
+
+                    if let Some((chain_id, intent)) = self
+                        .resolve_intent(
+                            chain_id,
+                            tx_status_opt.as_ref().map(|(_, s)| s),
+                            quote.as_deref(),
+                        )
+                        .await
+                    {
+                        remove_fee(asset_diff.asset_diffs.get_mut(&chain_id), &intent);
+                    }
 
                     if let Some((_, status)) = &tx_status_opt
                         && let TransactionStatus::Confirmed(receipt) = status
@@ -3641,6 +3658,37 @@ impl Relay {
         });
 
         Ok(needs_wrapping.then_some(key_address))
+    }
+
+    /// Resolves the intent for a transaction: fetches from chain if confirmed, otherwise returns
+    /// the one from quote if present.
+    ///
+    /// Intents published on chain may have a different paymentAmount than the stored quote (less)
+    /// because of chain fees.
+    async fn resolve_intent(
+        &self,
+        chain_id: ChainId,
+        status: Option<&TransactionStatus>,
+        quote: Option<&Quote>,
+    ) -> Option<(ChainId, Intent)> {
+        if let Some(status) = status
+            && let Some(tx_hash) = status.tx_hash()
+            && status.is_confirmed()
+            && let Ok(provider) = self.provider(chain_id)
+            && let Ok(Some(tx)) = provider.get_transaction_by_hash(tx_hash).await
+            && let Ok(decoded_intent) = Intent::decode_execute(tx.inner.input())
+        {
+            return Some((chain_id, decoded_intent));
+        }
+
+        if let Some(quote) = quote {
+            // InFlight/Pending/Failed, use quote intent
+            return Some((chain_id, quote.intent.clone()));
+        }
+
+        // <= v26 were not storing quotes, for any pending/inflight/failed this will need to return
+        // None
+        None
     }
 }
 
