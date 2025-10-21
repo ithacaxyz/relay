@@ -151,32 +151,6 @@ impl Quote {
         !self.asset_deficits.is_empty() || !self.fee_token_deficit.is_zero()
     }
 
-    /// Adjust asset deficits by excluding fee token deficit from the asset deficits if there is no external fee_payer.
-    pub fn adjust_asset_deficits(&mut self, fee_payer: Option<Address>, fee_token: Option<Address>) {
-        if fee_payer.is_none() {
-            let total_payment = self.intent.total_payment_max_amount();
-            let fee_deficit = self.fee_token_deficit;
-            let num_deficits = self.asset_deficits.0.len();
-
-            self.asset_deficits.0.retain_mut(|deficit| {
-                if Some(deficit.address.unwrap_or_default()) != fee_token {
-                    return true;
-                }
-
-                deficit.required = deficit.required.saturating_sub(total_payment);
-                deficit.deficit = deficit.deficit.saturating_sub(fee_deficit);
-
-                // If the only deficit is the fee token deficit, we can keep it and handle
-                // it as an interop intent requiring zero of the feeToken plus the fee.
-                if deficit.deficit.is_zero() && num_deficits == 1 {
-                    true
-                } else {
-                    !deficit.deficit.is_zero()
-                }
-            });
-        }
-    }
-
     /// Compute a digest of the quote for signing.
     pub fn digest(&self) -> B256 {
         let Self {
