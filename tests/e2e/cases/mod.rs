@@ -24,6 +24,7 @@ mod rpc_snap;
 mod signature;
 mod simple;
 mod simple_settlement;
+mod simulation;
 mod transactions;
 mod undeployed_token;
 mod upgrade;
