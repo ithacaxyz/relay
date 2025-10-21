@@ -4,19 +4,25 @@ use crate::e2e::environment::Environment;
 use alloy::primitives::{Address, U256};
 use relay::{
     rpc::RelayApiClient,
+    signers::Eip712PayLoadSigner,
     types::{
-        Call,
-        rpc::{Meta, PrepareCallsCapabilities, PrepareCallsParameters},
+        Call, KeyType, KeyWith712Signer,
+        rpc::{
+            Meta, PrepareCallsCapabilities, PrepareCallsParameters, SendPreparedCallsCapabilities,
+            SendPreparedCallsParameters,
+        },
     },
 };
 
 /// Test that prepare_calls succeeds with an account that has not yet been created,
-/// and that the response includes asset deficits.
+/// and that the response includes asset deficits. Also verifies that send_prepared_calls
+/// rejects quotes for unknown accounts.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_without_created_account() -> eyre::Result<()> {
     let env = Environment::setup().await?;
     let transfer_amount = U256::from(100);
     let eoa = Address::random();
+    let key = KeyWith712Signer::random_admin(KeyType::Secp256k1)?.unwrap();
 
     for fee_token in [env.fee_token, env.erc20, Address::ZERO] {
         let params = PrepareCallsParameters {
@@ -54,6 +60,21 @@ async fn test_simulate_without_created_account() -> eyre::Result<()> {
 
         assert!(quote.asset_deficits.0.iter().any(|deficit| deficit.address == Some(env.erc20)
             && deficit.deficit == expected_erc20_amount));
+
+        assert_eq!(quote.authorization_address, Some(Address::ZERO));
+        let result = env
+            .relay_endpoint
+            .send_prepared_calls(SendPreparedCallsParameters {
+                context: response.context,
+                signature: key.sign_payload_hash(response.digest).await?,
+                capabilities: SendPreparedCallsCapabilities::default(),
+                key: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unknown account"));
     }
 
     Ok(())
