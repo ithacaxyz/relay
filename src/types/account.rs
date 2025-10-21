@@ -539,4 +539,9 @@ impl DelegationStatus {
     pub fn is_stored(&self) -> bool {
         matches!(self, DelegationStatus::Stored { .. })
     }
+
+    /// Returns true if the account is not delegated on-chain or in storage
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, DelegationStatus::None { .. })
+    }
 }

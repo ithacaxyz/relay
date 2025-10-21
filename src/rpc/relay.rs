@@ -539,7 +539,7 @@ impl Relay {
 
         let intrinsic_gas = approx_intrinsic_cost(
             &intent_to_sign.encode_execute(),
-            context.stored_authorization.is_some(),
+            context.undelegated_authorization.is_some(),
         );
 
         let mut gas_estimate = GasEstimate::from_combined_gas(
@@ -556,7 +556,7 @@ impl Relay {
             .estimate_extra_fee(
                 &chain,
                 &intent_to_sign,
-                context.stored_authorization.clone(),
+                context.undelegated_authorization.clone(),
                 &native_fee_estimate,
                 &gas_estimate,
             )
@@ -655,7 +655,10 @@ impl Relay {
             eth_price,
             tx_gas: gas_estimate.tx,
             native_fee_estimate,
-            authorization_address: context.stored_authorization.as_ref().map(|auth| auth.address),
+            authorization_address: context
+                .undelegated_authorization
+                .as_ref()
+                .map(|auth| auth.address),
             additional_authorization: context.additional_authorization.map(|(_, auth)| auth),
             orchestrator: *orchestrator.address(),
             fee_token_deficit,
@@ -1056,7 +1059,7 @@ impl Relay {
             FeeEstimationContext {
                 fee_token: Address::ZERO,
                 fee_payer: account.address,
-                stored_authorization: Some(account.signed_authorization.clone()),
+                undelegated_authorization: Some(account.signed_authorization.clone()),
                 key: IntentKey::EoaRootKey,
                 additional_authorization: None,
                 intent_kind: IntentKind::Single,
@@ -1091,7 +1094,9 @@ impl Relay {
             account = account.with_overrides(stored.state_overrides()?);
         }
 
-        let delegation_implementation = delegation_status.try_implementation()?;
+        let delegation_implementation = delegation_status
+            .try_implementation()
+            .unwrap_or(self.contracts().delegation_implementation());
 
         let seq_to_stored_precalls = self
             .inner
@@ -1163,8 +1168,12 @@ impl Relay {
         }
 
         // Find the key that authorizes this intent
-        let Some(key) = self.try_find_key(identity, &pre_calls, request.chain_id).await? else {
-            return Err(KeysError::UnknownKeyHash(key_hash).into());
+        let key = if delegation_status.is_unknown() {
+            IntentKey::EoaRootKey
+        } else {
+            self.try_find_key(identity, &pre_calls, request.chain_id)
+                .await?
+                .ok_or(KeysError::UnknownKeyHash(key_hash))?
         };
 
         // We only apply client-supplied state overrides on intents on the destination chain
@@ -1174,6 +1183,24 @@ impl Relay {
             }
             _ => (Default::default(), Default::default()),
         };
+
+        let undelegated_authorization = delegation_status
+            .stored_account()
+            .map(|acc| acc.signed_authorization.clone())
+            .or_else(|| {
+                delegation_status.is_unknown().then(|| {
+                    SignedAuthorization::new_unchecked(
+                        Authorization {
+                            chain_id: U256::from(request.chain_id),
+                            address: self.contracts().delegation_proxy(),
+                            nonce: 0,
+                        },
+                        0,
+                        U256::ZERO,
+                        U256::ZERO,
+                    )
+                })
+            });
 
         // Call estimateFee to give us a quote with a complete intent that the user can sign
         let (asset_diff, quote) = self
@@ -1207,9 +1234,7 @@ impl Relay {
                     // was not provided by the user
                     fee_token: request.capabilities.meta.fee_token.unwrap_or(Address::ZERO),
                     fee_payer: request.capabilities.meta.fee_payer.unwrap_or(identity.root_eoa),
-                    stored_authorization: delegation_status
-                        .stored_account()
-                        .map(|acc| acc.signed_authorization.clone()),
+                    undelegated_authorization,
                     additional_authorization,
                     key,
                     intent_kind,
@@ -1278,13 +1303,8 @@ impl Relay {
         request.calls = self.generate_calls(&request)?;
 
         // Get next available nonce for DEFAULT_SEQUENCE_KEY
-        let nonce = request
-            .get_nonce(
-                delegation_status.as_ref().and_then(|s| s.stored_account()),
-                &provider,
-                &self.inner.storage,
-            )
-            .await?;
+        let nonce =
+            request.get_nonce(delegation_status.as_ref(), &provider, &self.inner.storage).await?;
 
         // If we're dealing with a PreCall do not estimate
         let (asset_diff, context, key, fee_payer_digest) = if request.capabilities.pre_call {
@@ -2186,7 +2206,7 @@ impl Relay {
 
         let nonce = request
             .get_nonce(
-                delegation_status.stored_account(),
+                Some(&delegation_status),
                 &self.provider(request.chain_id)?,
                 &self.inner.storage,
             )

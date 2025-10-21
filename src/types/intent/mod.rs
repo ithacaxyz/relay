@@ -77,8 +77,8 @@ pub struct FeeEstimationContext {
     pub fee_token: Address,
     /// Address that pays fees (either specified or the EOA).
     pub fee_payer: Address,
-    /// Optional stored authorization for EIP-7702 delegation.
-    pub stored_authorization: Option<SignedAuthorization>,
+    /// Optional authorization for EIP-7702 delegation.
+    pub undelegated_authorization: Option<SignedAuthorization>,
     /// Additional authorization made in the intent - this is used when we want to auto delegate
     /// the paymaster.
     ///
@@ -100,7 +100,7 @@ pub struct FeeEstimationContext {
 impl FeeEstimationContext {
     /// Returns the address of the stored [`SignedAuthorization`].
     pub fn stored_auth_address(&self) -> Option<Address> {
-        self.stored_authorization.as_ref().map(|auth| auth.address)
+        self.undelegated_authorization.as_ref().map(|auth| auth.address)
     }
 }
 

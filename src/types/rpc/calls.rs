@@ -9,7 +9,8 @@ use crate::{
     storage::{BundleStatus, RelayStorage, StorageApi},
     types::{
         Account, AssetDiffResponse, AssetType, Call, CreatableAccount, DEFAULT_SEQUENCE_KEY,
-        Erc20Slots, Key, KeyType, Quote, SignedCall, SignedCalls, SignedQuotes, VersionedContracts,
+        DelegationStatus, Erc20Slots, Key, KeyType, Quote, SignedCall, SignedCalls, SignedQuotes,
+        VersionedContracts,
     },
 };
 use alloy::{
@@ -288,7 +289,7 @@ impl PrepareCallsParameters {
     #[instrument(skip_all)]
     pub async fn get_nonce(
         &self,
-        maybe_stored: Option<&CreatableAccount>,
+        delegation_status: Option<&DelegationStatus>,
         provider: &DynProvider,
         storage: &RelayStorage,
     ) -> Result<U256, RelayError> {
@@ -329,7 +330,7 @@ impl PrepareCallsParameters {
                 } else {
                     // otherwise, query for the next account nonce onchain
                     let mut account = Account::new(eoa, &provider);
-                    if let Some(stored) = maybe_stored {
+                    if let Some(stored) = delegation_status.and_then(|s| s.stored_account()) {
                         account = account.with_overrides(stored.state_overrides()?);
                     }
                     Ok(account.get_nonce_for_sequence(U192::from(seq_key)).await?)
@@ -345,7 +346,7 @@ impl PrepareCallsParameters {
             .max_by_key(|precall| precall.nonce)
         {
             Ok(precall.nonce + uint!(1_U256))
-        } else if maybe_stored.is_some() {
+        } else if delegation_status.is_some_and(|s| !s.is_delegated()) {
             Ok(Account::random_nonce())
         } else {
             let eoa = self.from.ok_or(IntentError::MissingSender)?;
