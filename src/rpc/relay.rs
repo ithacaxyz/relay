@@ -1723,10 +1723,10 @@ impl Relay {
             let quote_result = self
                 .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                 .await?;
-            
+
             // Exit early if this is an unknown account.
             if delegation_status.is_unknown() {
-                return Ok(quote_result)
+                return Ok(quote_result);
             }
 
             // It should never happen that we do not have a quote from this simulation, but
