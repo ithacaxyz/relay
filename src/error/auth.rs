@@ -41,6 +41,9 @@ pub enum AuthError {
     /// The delegation proxy is invalid.
     #[error("invalid delegation proxy {0}")]
     InvalidDelegationProxy(Address),
+    /// Unknown account quotes are not accepted.
+    #[error("quotes for unknown accounts are not accepted")]
+    UnknownAccountQuote,
 }
 
 impl AuthError {
@@ -59,7 +62,8 @@ impl From<AuthError> for jsonrpsee::types::error::ErrorObject<'static> {
             | AuthError::InvalidAuthItem { .. }
             | AuthError::InvalidDelegation { .. }
             | AuthError::InvalidDelegationProxy { .. }
-            | AuthError::EoaNotDelegated(..) => invalid_params(err.to_string()),
+            | AuthError::EoaNotDelegated(..)
+            | AuthError::UnknownAccountQuote => invalid_params(err.to_string()),
         }
     }
 }

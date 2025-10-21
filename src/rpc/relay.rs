@@ -1203,7 +1203,7 @@ impl Relay {
             });
 
         // Call estimateFee to give us a quote with a complete intent that the user can sign
-        let (asset_diff, quote) = self
+        let (asset_diff, mut quote) = self
             .estimate_fee(
                 PartialIntent {
                     eoa: identity.root_eoa,
@@ -1250,6 +1250,12 @@ impl Relay {
                     "Failed to create a quote.",
                 );
             })?;
+
+        if delegation_status.is_unknown() {
+            // send_prepared_calls will identify unknown account quotes (and reject them) by
+            // looking at the quote's authorization_address
+            quote.authorization_address = Some(Address::ZERO);
+        }
 
         Ok((asset_diff, quote))
     }
@@ -2816,6 +2822,13 @@ impl RelayApiServer for Relay {
                     && capabilities.fee_signature.is_empty()
                 {
                     return Err(IntentError::MissingFeeSignature.into());
+                }
+
+                if let Some(quote) = quotes.ty().quotes.first()
+                    && let Some(auth) = &quote.authorization_address
+                    && auth.is_zero()
+                {
+                    return Err(AuthError::UnknownAccountQuote.into());
                 }
 
                 self.send_intents(*quotes, capabilities, signature).await.inspect_err(|err| {
