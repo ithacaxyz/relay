@@ -43,17 +43,17 @@ async fn test_simulate_without_created_account() -> eyre::Result<()> {
         let expected_erc20_amount = if env.erc20 == fee_token {
             transfer_amount + quote.fee_token_deficit
         } else {
-
-            assert!(quote.asset_deficits.0.iter().any(
-                |deficit| (deficit.address == Some(fee_token) || deficit.address == None) && deficit.deficit == quote.fee_token_deficit
-            ));
+            assert!(
+                quote.asset_deficits.0.iter().any(|deficit| (deficit.address == Some(fee_token)
+                    || deficit.address.is_none())
+                    && deficit.deficit == quote.fee_token_deficit)
+            );
 
             transfer_amount
         };
 
-        assert!(quote.asset_deficits.0.iter().any(
-            |deficit| deficit.address == Some(env.erc20) && deficit.deficit == expected_erc20_amount
-        ));
+        assert!(quote.asset_deficits.0.iter().any(|deficit| deficit.address == Some(env.erc20)
+            && deficit.deficit == expected_erc20_amount));
     }
 
     Ok(())
