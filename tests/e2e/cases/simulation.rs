@@ -45,7 +45,7 @@ async fn test_simulate_without_created_account() -> eyre::Result<()> {
         } else {
 
             assert!(quote.asset_deficits.0.iter().any(
-                |deficit| deficit.address == Some(fee_token) || deficit.address == None && deficit.deficit == quote.fee_token_deficit
+                |deficit| (deficit.address == Some(fee_token) || deficit.address == None) && deficit.deficit == quote.fee_token_deficit
             ));
 
             transfer_amount
