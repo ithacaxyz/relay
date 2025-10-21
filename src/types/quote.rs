@@ -151,13 +151,8 @@ impl Quote {
         !self.asset_deficits.is_empty() || !self.fee_token_deficit.is_zero()
     }
 
-    /// Adjust asset deficits by excluding fee token deficit from the asset deficits if there is no
-    /// external fee_payer.
-    pub fn adjust_asset_deficits(
-        &mut self,
-        fee_payer: Option<Address>,
-        fee_token: Option<Address>,
-    ) {
+    /// Adjust asset deficits by excluding fee token deficit from the asset deficits if there is no external fee_payer.
+    pub fn adjust_asset_deficits(&mut self, fee_payer: Option<Address>, fee_token: Option<Address>) {
         if fee_payer.is_none() {
             let total_payment = self.intent.total_payment_max_amount();
             let fee_deficit = self.fee_token_deficit;
