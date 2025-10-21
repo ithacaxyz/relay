@@ -1720,14 +1720,14 @@ impl Relay {
             (requested_with_balances, None)
         } else {
             // Otherwise, we try to simulate intent as single chain first.
-            let quote_result = self
+            let mut quote_result = self
                 .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                 .await?;
 
             // It should never happen that we do not have a quote from this simulation, but
             // to avoid outright crashing we just throw an internal
             // error.
-            let quote = quote_result.1.quotes.first().ok_or_else(|| {
+            let quote = quote_result.1.quotes.first_mut().ok_or_else(|| {
                 RelayError::InternalError(eyre::eyre!("no quote after simulation"))
             })?;
 
@@ -1783,34 +1783,14 @@ impl Relay {
                 return Ok(quote_result);
             }
 
-            let mut deficits = quote.asset_deficits.0.clone();
-            // Exclude the feeTokenDeficit from the deficit, we are handling it separately.
-            // Only do this if there's no fee_payer, since fee_token_deficit is excluded.
-            if request.capabilities.meta.fee_payer.is_none() {
-                deficits.retain_mut(|deficit| {
-                    if Some(deficit.address.unwrap_or_default())
-                        != request.capabilities.meta.fee_token
-                    {
-                        return true;
-                    }
-
-                    deficit.required =
-                        deficit.required.saturating_sub(quote.intent.total_payment_max_amount());
-                    deficit.deficit = deficit.deficit.saturating_sub(quote.fee_token_deficit);
-
-                    // If the only deficit is the fee token deficit, we can keep it and handle
-                    // it as an interop intent requiring zero of the feeToken plus the fee.
-                    if deficit.deficit.is_zero() && quote.asset_deficits.0.len() == 1 {
-                        true
-                    } else {
-                        !deficit.deficit.is_zero()
-                    }
-                });
-            }
+            quote.adjust_asset_deficits(
+                request.capabilities.meta.fee_payer,
+                request.capabilities.meta.fee_token,
+            );
 
             let mut requested_assets = Vec::new();
 
-            for deficit in &deficits {
+            for deficit in &quote.asset_deficits.0 {
                 // If interop is not enabled or not supported for the requested asset, we can't
                 // proceed and should return quote with deficits.
                 if self.inner.chains.interop().is_none()
@@ -2018,6 +1998,15 @@ impl Relay {
                     return self
                         .build_single_chain_quote(request, identity, delegation_status, nonce, true)
                         .await
+                        .map(|(asset_diffs, mut quotes)| {
+                            if let Some(first_quote) = quotes.quotes.first_mut() {
+                                first_quote.adjust_asset_deficits(
+                                    request.capabilities.meta.fee_payer,
+                                    request.capabilities.meta.fee_token,
+                                );
+                            }
+                            (asset_diffs, quotes)
+                        })
                         .map_err(Into::into);
                 };
                 return Ok(quote);
