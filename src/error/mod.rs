@@ -88,6 +88,14 @@ pub enum RelayError {
     /// The relay is unhealthy.
     #[error("service is unhealthy")]
     Unhealthy,
+    /// The relay is unhealthy with detailed report.
+    #[error("service is unhealthy: db_healthy={is_db_ok}, unhealthy_chains=[{unhealthy_chains:?}]")]
+    UnhealthyReport {
+        /// Whether the database is healthy.
+        is_db_ok: bool,
+        /// List of unhealthy chain IDs.
+        unhealthy_chains: Vec<ChainId>,
+    },
     /// An internal error occurred.
     #[error(transparent)]
     InternalError(#[from] eyre::Error),
@@ -151,6 +159,7 @@ impl From<RelayError> for jsonrpsee::types::error::ErrorObject<'static> {
             | RelayError::ContractError(_)
             | RelayError::UnsupportedOrchestrator(_)
             | RelayError::Unhealthy
+            | RelayError::UnhealthyReport { .. }
             | RelayError::UnsupportedAsset { .. }
             | RelayError::InternalError(_)
             | RelayError::Settlement(_) => internal_rpc(err.to_string()),

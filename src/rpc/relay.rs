@@ -88,6 +88,14 @@ pub trait RelayApi {
     #[method(name = "health", aliases = ["health"])]
     async fn health(&self) -> RpcResult<Health>;
 
+    /// Liveness check - returns "ok" if relay process is running.
+    #[method(name = "live")]
+    async fn live(&self) -> RpcResult<String>;
+
+    /// Readiness check - returns "ok" if relay can serve traffic (mainnet RPCs & DB healthy).
+    #[method(name = "ready")]
+    async fn ready(&self) -> RpcResult<String>;
+
     /// Get capabilities of the relay, which are different sets of configuration values.
     ///
     /// See also <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-5792.md#wallet_getcapabilities>
@@ -2567,6 +2575,17 @@ impl Relay {
 
         Ok(Some((fee_payer_asset_diffs, Box::new(fee_payer_quote))))
     }
+
+    async fn check_db_health(&self) -> bool {
+        self.inner
+            .storage
+            .ping()
+            .await
+            .inspect_err(|err| {
+                error!(%err, "Failed to ping database for health check");
+            })
+            .is_ok()
+    }
 }
 
 #[async_trait]
@@ -2583,23 +2602,9 @@ impl RelayApiServer for Relay {
         }))
         .await
         .is_ok();
-
-        let db_ok = self
-            .inner
-            .storage
-            .ping()
-            .await
-            .inspect_err(|err| {
-                error!(
-                    %err,
-                    "Failed to ping database for health check",
-                );
-            })
-            .is_ok();
-
         let quote_signer = self.inner.quote_signer.address();
 
-        if chains_ok && db_ok {
+        if chains_ok && self.check_db_health().await {
             Ok(Health {
                 status: "rpc ok".into(),
                 version: RELAY_SHORT_VERSION.into(),
@@ -2607,6 +2612,45 @@ impl RelayApiServer for Relay {
             })
         } else {
             Err(RelayError::Unhealthy.into())
+        }
+    }
+
+    async fn live(&self) -> RpcResult<String> {
+        Ok("ok".to_string())
+    }
+
+    async fn ready(&self) -> RpcResult<String> {
+        let (results, is_db_ok) = join!(
+            join_all(
+                self.chains()
+                    .filter(|chain| {
+                        chain.chain().named().map(|named| !named.is_testnet()).unwrap_or(true)
+                    })
+                    .map(async |chain| {
+                        chain
+                            .provider()
+                            .get_block_number()
+                            .await
+                            .map(|_| chain.id())
+                            .map_err(|err| (chain.id(), err))
+                    })
+            ),
+            self.check_db_health()
+        );
+
+        let unhealthy_chains = results.iter().filter_map(|r| r.as_ref().err()).collect::<Vec<_>>();
+
+        if unhealthy_chains.is_empty() && is_db_ok {
+            Ok("ok".to_string())
+        } else {
+            for (chain_id, err) in &unhealthy_chains {
+                error!(%err, %chain_id, "Chain unhealthy in readiness check");
+            }
+            Err(RelayError::UnhealthyReport {
+                is_db_ok,
+                unhealthy_chains: unhealthy_chains.iter().map(|(id, _)| *id).collect(),
+            }
+            .into())
         }
     }
 
