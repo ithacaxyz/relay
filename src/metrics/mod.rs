@@ -77,24 +77,28 @@ where
             // Insert the span context for consuming later in `HttpTracingService`.
             rp.extensions_mut().insert(span.context());
 
+            // record error code in span if present
             if let Some(error_code) = rp.as_error_code() {
                 span.record("rpc.jsonrpc.error_code", error_code);
+            }
 
-                // only record metrics for methods that exist
-                if error_code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE {
-                    counter!(
-                        "rpc.call.count",
-                        "method" => method.clone(),
-                        "code" => rp.as_error_code().unwrap_or_default().to_string()
-                    )
-                    .increment(1);
+            // only record metrics for methods that exist
+            if rp
+                .as_error_code()
+                .is_none_or(|code| code != jsonrpsee::types::error::METHOD_NOT_FOUND_CODE)
+            {
+                counter!(
+                    "rpc.call.count",
+                    "method" => method.clone(),
+                    "code" => rp.as_error_code().unwrap_or_default().to_string()
+                )
+                .increment(1);
 
-                    histogram!(
-                        "rpc.call.latency",
-                        "method" => method
-                    )
-                    .record(elapsed.as_millis() as f64);
-                }
+                histogram!(
+                    "rpc.call.latency",
+                    "method" => method
+                )
+                .record(elapsed.as_millis() as f64);
             }
 
             rp
