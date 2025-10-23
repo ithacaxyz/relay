@@ -46,6 +46,26 @@ async fn test_health() -> eyre::Result<()> {
 }
 
 #[tokio::test]
+async fn test_live() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let response = env.relay_endpoint.live().await?;
+    assert_eq!(response, "ok");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ready() -> eyre::Result<()> {
+    let env = Environment::setup().await?;
+
+    let response = env.relay_endpoint.ready().await?;
+    assert_eq!(response, "ok");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_get_capabilities() -> eyre::Result<()> {
     let env = Environment::setup().await?;
 

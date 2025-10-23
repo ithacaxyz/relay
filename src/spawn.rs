@@ -248,7 +248,11 @@ pub async fn try_spawn(config: RelayConfig, skip_diagnostics: bool) -> eyre::Res
         .set_http_middleware(
             ServiceBuilder::new()
                 .layer(cors)
-                .layer(ProxyGetRequestLayer::new([("/health", "health")])?)
+                .layer(ProxyGetRequestLayer::new([
+                    ("/health", "health"),
+                    ("/live", "live"),
+                    ("/ready", "ready"),
+                ])?)
                 .layer_fn(HttpTracingService::new),
         )
         .set_rpc_middleware(RpcServiceBuilder::new().layer_fn(RpcMetricsService::new))
