@@ -1086,6 +1086,7 @@ sim_mode: trace
             fees: Default::default(),
             signers: Default::default(),
             settler_address: None,
+            rpc_timeout_secs: default_rpc_timeout_secs(),
         };
 
         assert_eq!(config, expected);
