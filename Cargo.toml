@@ -11,7 +11,7 @@ path = "src/bin/relay.rs"
 name = "relay"
 
 [dependencies]
-alloy = { version = "1.0.38", features = [
+alloy = { version = "1.0.41", features = [
     "std",
     "essentials",
     "provider-ws",
@@ -113,7 +113,7 @@ strum = "0.27"
 strum_macros = "0.27"
 
 [dev-dependencies]
-alloy = { version = "1.0.38", features = [
+alloy = { version = "1.0.41", features = [
     "eips",
     "provider-anvil-node",
     "reqwest-rustls-tls",
