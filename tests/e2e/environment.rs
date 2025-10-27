@@ -704,7 +704,7 @@ impl Environment {
                                 fees: Default::default(),
                                 signers: SignerConfig { num_signers: config.num_signers },
                                 settler_address: Some(settler_addresses[idx]),
-                                rpc_timeout_secs: 10,
+                                rpc_timeout_secs: 20,
                             },
                         )
                     },
