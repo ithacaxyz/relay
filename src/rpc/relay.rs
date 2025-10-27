@@ -2764,10 +2764,27 @@ impl RelayApiServer for Relay {
                         }),
                     })
                 });
-            Ok::<_, RelayError>((chain, try_join_all(txs).await?))
+
+            let assets: Vec<_> = join_all(txs)
+                .await
+                .into_iter()
+                .filter_map(|result| {
+                    result.inspect_err(|e| warn!(%chain, error = %e, "Failed to fetch asset")).ok()
+                })
+                .collect();
+
+            Ok::<_, RelayError>((chain, assets))
         });
 
-        Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
+        let response: HashMap<_, _> = join_all(chain_details)
+            .await
+            .into_iter()
+            .filter_map(|result| {
+                result.inspect_err(|e| warn!(error = %e, "Failed to fetch assets for chain")).ok()
+            })
+            .collect();
+
+        Ok(GetAssetsResponse(response))
     }
 
     async fn prepare_calls(
