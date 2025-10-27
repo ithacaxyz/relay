@@ -22,6 +22,8 @@ use url::Url;
 
 pub mod delegate;
 pub mod error;
+pub mod timeout;
+pub use timeout::TimeoutLayer;
 
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
 

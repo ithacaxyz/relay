@@ -440,6 +440,11 @@ pub struct ChainConfig {
     /// Required if the chain has any interop-enabled tokens.
     #[serde(default)]
     pub settler_address: Option<Address>,
+    /// RPC request timeout in seconds.
+    ///
+    /// Defaults to 10 seconds if not specified.
+    #[serde(default = "default_rpc_timeout_secs")]
+    pub rpc_timeout_secs: u64,
 }
 
 /// Chain specific config for signers.
@@ -695,6 +700,10 @@ const fn default_max_attempts() -> u32 {
 }
 
 const fn default_rate_limit_minutes() -> u32 {
+    10
+}
+
+const fn default_rpc_timeout_secs() -> u64 {
     10
 }
 
