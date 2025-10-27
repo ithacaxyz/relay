@@ -122,7 +122,7 @@ derive_more = { version = "2", features = ["debug"] }
 dotenvy = "0.15"
 itertools = "0.14"
 parking_lot = "0.12"
-tempfile = "3.21"
+tempfile = "3.23"
 insta = { version = "1.43.2", features = ["json", "redactions"] }
 
 [build-dependencies]
