@@ -61,6 +61,8 @@ pub struct Chain {
     settler_address: Option<Address>,
     /// ERC20 balance storage slots
     erc20_slots: Erc20Slots,
+    /// The RPC endpoint URL for this chain.
+    endpoint: Url,
 }
 
 impl Chain {
@@ -132,6 +134,11 @@ impl Chain {
     /// Returns the ERC20 slots for this chain.
     pub fn erc20_slots(&self) -> &Erc20Slots {
         &self.erc20_slots
+    }
+
+    /// Returns the RPC endpoint URL for this chain.
+    pub fn endpoint(&self) -> &Url {
+        &self.endpoint
     }
 
     /// Builds state overrides for intent simulation.
@@ -274,6 +281,7 @@ impl Chains {
                         signers: chain_signers,
                         settler_address: desc.settler_address,
                         erc20_slots,
+                        endpoint: desc.endpoint.clone(),
                     },
                 ))
             }))
@@ -511,8 +519,9 @@ async fn try_build_provider(
 ) -> eyre::Result<DynProvider> {
     let (transport, is_local) = create_transport(endpoint).await?;
 
-    let builder =
-        ClientBuilder::default().layer(TraceLayer::new(chain_id)).layer(RETRY_LAYER.clone());
+    let builder = ClientBuilder::default()
+        .layer(TraceLayer::new(chain_id, endpoint.clone()))
+        .layer(RETRY_LAYER.clone());
 
     let client = if let Some(sequencer_url) = sequencer_endpoint {
         let sequencer =

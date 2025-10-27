@@ -2596,6 +2596,7 @@ impl RelayApiServer for Relay {
                 error!(
                     %err,
                     chain_id=%chain.id(),
+                    endpoint=%chain.endpoint(),
                     "Failed to obtain block number for health check",
                 );
             })
