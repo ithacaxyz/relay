@@ -363,6 +363,8 @@ impl Chains {
             None
         };
 
+        asset_info.populate_fee_tokens(&chains).await;
+
         Ok(Self { chains, interop })
     }
 
