@@ -21,7 +21,7 @@ use alloy::{
 use futures_util::future::join_all;
 use schnellru::{ByLength, LruMap};
 use std::{
-    collections::HashSet,
+    collections::hash_map::Entry,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -243,9 +243,10 @@ pub struct AssetInfoService {
     /// Cached asset metadata per chain.
     cache: LruMap<(ChainId, Asset), AssetWithInfo>,
     /// Fee token metadata per chain. These are never evicted.
-    fee_tokens: HashMap<(ChainId, Asset), AssetWithInfo>,
-    /// Set of (chain_id, asset) that are configured as fee tokens.
-    is_fee_token: HashSet<(ChainId, Asset)>,
+    ///
+    /// Keys are populated during initialization based on config, but values start as `None`
+    /// and get populated later by chains when the metadata is fetched.
+    fee_tokens: HashMap<(ChainId, Asset), Option<AssetWithInfo>>,
     /// Sender half for asset info messages.
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
     /// Incoming messages for the service.
@@ -259,7 +260,7 @@ impl AssetInfoService {
     pub fn new(capacity: u32, config: &RelayConfig) -> Self {
         let (command_tx, command_rx) = unbounded_channel();
 
-        let mut is_fee_token = HashSet::new();
+        let mut fee_tokens = HashMap::default();
         for (chain, chain_config) in &config.chains {
             for (_, asset_desc) in chain_config.assets.iter() {
                 if asset_desc.fee_token {
@@ -268,15 +269,14 @@ impl AssetInfoService {
                     } else {
                         Asset::Token(asset_desc.address)
                     };
-                    is_fee_token.insert((chain.id(), asset));
+                    fee_tokens.insert((chain.id(), asset), None);
                 }
             }
         }
 
         Self {
             cache: LruMap::new(ByLength::new(capacity)),
-            fee_tokens: HashMap::default(),
-            is_fee_token,
+            fee_tokens,
             command_tx,
             command_rx,
             native_symbols: config
@@ -324,7 +324,7 @@ impl AssetInfoService {
                     } else {
                         self.fee_tokens
                             .get(&(chain_id, asset))
-                            .cloned()
+                            .and_then(|opt| opt.clone())
                             .or_else(|| self.cache.get(&(chain_id, asset)).cloned())
                     };
 
@@ -341,8 +341,8 @@ impl AssetInfoService {
         for asset_with_info in assets {
             let key = (chain_id, asset_with_info.asset);
 
-            if self.is_fee_token.contains(&key) {
-                self.fee_tokens.insert(key, asset_with_info);
+            if let Entry::Occupied(mut e) = self.fee_tokens.entry(key) {
+                e.insert(Some(asset_with_info));
             } else {
                 self.cache.get_or_insert(key, || asset_with_info);
             }
