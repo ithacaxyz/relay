@@ -267,6 +267,7 @@ impl<P: Provider> SimulatorContract<P> {
                 tracing_options: GethDebugTracingOptions::call_tracer(
                     CallConfig::default().with_log(),
                 ),
+                ..Default::default()
             };
 
             trace!(?tx_request, ?trace_options, "simulating intent with debug_traceCall");
