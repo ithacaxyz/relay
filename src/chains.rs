@@ -514,8 +514,8 @@ async fn try_build_provider(
     let (transport, is_local) = create_transport(endpoint).await?;
 
     let builder = ClientBuilder::default()
-        .layer(TimeoutLayer::new(rpc_timeout, chain_id))
         .layer(TraceLayer::new(chain_id))
+        .layer(TimeoutLayer::new(rpc_timeout, chain_id))
         .layer(RETRY_LAYER.clone());
 
     let client = if let Some(sequencer_url) = sequencer_endpoint {
