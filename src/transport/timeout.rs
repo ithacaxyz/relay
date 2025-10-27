@@ -63,21 +63,22 @@ where
         let chain_id = self.chain_id;
 
         async move {
-            match tokio::time::timeout(timeout, fut).await {
-                Ok(result) => result,
-                Err(_) => {
+            tokio::time::timeout(timeout, fut)
+                .await
+                .inspect_err(|_| {
                     warn!(
                         %chain_id,
                         %method,
                         timeout_secs = timeout.as_secs(),
                         "RPC request timeout"
                     );
-                    Err(TransportErrorKind::custom_str(&format!(
+                })
+                .map_err(|_| {
+                    TransportErrorKind::custom_str(&format!(
                         "request timeout: chain_id={}, method={}",
                         chain_id, method
-                    )))
-                }
-            }
+                    ))
+                })?
         }
         .boxed()
     }
