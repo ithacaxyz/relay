@@ -1,5 +1,6 @@
 //! Asset info service.
 use crate::{
+    chains::Chain,
     config::RelayConfig,
     error::{AssetError, RelayError},
     types::{
@@ -17,8 +18,10 @@ use alloy::{
     sol_types::SolCall,
     transports::TransportErrorKind,
 };
+use futures_util::future::join_all;
 use schnellru::{ByLength, LruMap};
 use std::{
+    collections::hash_map::Entry,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -29,7 +32,7 @@ use tokio::{
     },
     try_join,
 };
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 /// Messages accepted by the [`AssetInfoService`].
 #[derive(Debug)]
@@ -203,7 +206,34 @@ impl AssetInfoServiceHandle {
 
         Ok(builder.build(metadata, tokens_uris))
     }
+
+    /// Populate fee token metadata cache for all chains.
+    ///
+    /// These will never be evicted.
+    pub async fn populate_fee_tokens(&self, chains: &HashMap<ChainId, Chain>) {
+        info!("Populating fee token metadata for all chains");
+
+        let _ = join_all(chains.values().filter(|chain| !chain.assets().fee_tokens().is_empty()).map(
+            async |chain| {
+                let fee_tokens = chain.assets().fee_tokens();
+
+                self.get_asset_info_list(
+                    chain.provider(),
+                    fee_tokens.iter().map(|(_, desc)| Asset::from(desc.address)).collect(),
+                )
+                .await
+                .inspect(|_| {
+                    info!(chain_id = chain.id(), count = fee_tokens.len(), "Pre-populated fee tokens")
+                })
+                .inspect_err(|e| {
+                    error!(chain_id = chain.id(), error = %e, "Failed to pre-populate fee tokens")
+                })
+            },
+        ))
+        .await;
+    }
 }
+
 /// Service that provides [`AssetWithInfo`] about any kind of asset.
 ///
 /// TODO: apart from onchain, there should be a more trusted source that can be passed when
@@ -212,6 +242,11 @@ impl AssetInfoServiceHandle {
 pub struct AssetInfoService {
     /// Cached asset metadata per chain.
     cache: LruMap<(ChainId, Asset), AssetWithInfo>,
+    /// Fee token metadata per chain. These are never evicted.
+    ///
+    /// Keys are populated during initialization based on config, but values start as `None`
+    /// and get populated later by chains when the metadata is fetched.
+    fee_tokens: HashMap<(ChainId, Asset), Option<AssetWithInfo>>,
     /// Sender half for asset info messages.
     command_tx: UnboundedSender<AssetInfoServiceMessage>,
     /// Incoming messages for the service.
@@ -225,8 +260,23 @@ impl AssetInfoService {
     pub fn new(capacity: u32, config: &RelayConfig) -> Self {
         let (command_tx, command_rx) = unbounded_channel();
 
+        let mut fee_tokens = HashMap::default();
+        for (chain, chain_config) in &config.chains {
+            for (_, asset_desc) in chain_config.assets.iter() {
+                if asset_desc.fee_token {
+                    let asset = if asset_desc.address.is_zero() {
+                        Asset::Native
+                    } else {
+                        Asset::Token(asset_desc.address)
+                    };
+                    fee_tokens.insert((chain.id(), asset), None);
+                }
+            }
+        }
+
         Self {
             cache: LruMap::new(ByLength::new(capacity)),
+            fee_tokens,
             command_tx,
             command_rx,
             native_symbols: config
@@ -272,7 +322,10 @@ impl AssetInfoService {
                             },
                         })
                     } else {
-                        self.cache.get(&(chain_id, asset)).cloned()
+                        self.fee_tokens
+                            .get(&(chain_id, asset))
+                            .and_then(|opt| opt.clone())
+                            .or_else(|| self.cache.get(&(chain_id, asset)).cloned())
                     };
 
                     (asset, info)
@@ -286,7 +339,13 @@ impl AssetInfoService {
         trace!(chain_id, ?assets, "Received update request for asset infos.");
 
         for asset_with_info in assets {
-            self.cache.get_or_insert((chain_id, asset_with_info.asset), || asset_with_info);
+            let key = (chain_id, asset_with_info.asset);
+
+            if let Entry::Occupied(mut e) = self.fee_tokens.entry(key) {
+                e.insert(Some(asset_with_info));
+            } else {
+                self.cache.get_or_insert(key, || asset_with_info);
+            }
         }
     }
 }
