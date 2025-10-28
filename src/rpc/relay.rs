@@ -223,8 +223,8 @@ impl Relay {
                 let fee_tokens = chain.assets().fee_tokens();
 
                 Some(async move {
-                    let fee_tokens =
-                        try_join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
+                    let fee_tokens: Vec<_> =
+                        join_all(fee_tokens.into_iter().map(|(token_uid, token)| {
                             let provider = provider.clone();
                             let native_uid = native_uid.clone();
                             async move {
@@ -251,7 +251,16 @@ impl Relay {
                                 Ok(ChainFeeToken::new(token_uid, token, symbol, Some(rate)))
                             }
                         }))
-                        .await?;
+                        .await
+                        .into_iter()
+                        .filter_map(|result: Result<_, QuoteError>| {
+                            result
+                                .inspect_err(
+                                    |e| warn!(%chain_id, error = %e, "Failed to fetch fee token"),
+                                )
+                                .ok()
+                        })
+                        .collect();
 
                     Ok::<_, QuoteError>((
                         chain_id,
@@ -268,7 +277,20 @@ impl Relay {
             })
             .collect();
 
-        Ok(RelayCapabilities(capabilities.try_collect().await?))
+        Ok(RelayCapabilities(
+            capabilities
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|result| {
+                    result
+                        .inspect_err(
+                            |e| warn!(error = %e, "Failed to fetch capabilities for chain"),
+                        )
+                        .ok()
+                })
+                .collect(),
+        ))
     }
 
     /// Estimates additional fees to be paid for a intent (e.g the current L1 DA fees).
@@ -2764,10 +2786,27 @@ impl RelayApiServer for Relay {
                         }),
                     })
                 });
-            Ok::<_, RelayError>((chain, try_join_all(txs).await?))
+
+            let assets: Vec<_> = join_all(txs)
+                .await
+                .into_iter()
+                .filter_map(|result| {
+                    result.inspect_err(|e| warn!(%chain, error = %e, "Failed to fetch asset")).ok()
+                })
+                .collect();
+
+            Ok::<_, RelayError>((chain, assets))
         });
 
-        Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
+        let response: HashMap<_, _> = join_all(chain_details)
+            .await
+            .into_iter()
+            .filter_map(|result| {
+                result.inspect_err(|e| warn!(error = %e, "Failed to fetch assets for chain")).ok()
+            })
+            .collect();
+
+        Ok(GetAssetsResponse(response))
     }
 
     async fn prepare_calls(

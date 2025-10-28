@@ -58,7 +58,7 @@ jobs:
         run: |
           # Source the env file and export to GitHub Actions environment
           source tests/assets/config/base_sepolia.env
-          echo "TEST_FORK_URL=$TEST_FORK_URL" >> $GITHUB_ENV
+          echo "TEST_FORK_URL=${{ secrets.BASE_SEPOLIA_URL }}" >> $GITHUB_ENV
           echo "TEST_ORCHESTRATOR=$TEST_ORCHESTRATOR" >> $GITHUB_ENV
           echo "TEST_PROXY=$TEST_PROXY" >> $GITHUB_ENV
           echo "TEST_SIMULATOR=$TEST_SIMULATOR" >> $GITHUB_ENV
