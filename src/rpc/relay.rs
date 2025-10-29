@@ -2757,12 +2757,16 @@ impl RelayApiServer for Relay {
             };
 
             let erc20_balances = if !erc20_addresses.is_empty() {
-                let mut multicall = chain_provider.multicall().dynamic();
-                for address in &erc20_addresses {
-                    let erc20 = IERC20::new(address.address(), &chain_provider);
-                    multicall = multicall.add_dynamic(erc20.balanceOf(request.account));
-                }
-                let balances = multicall.aggregate().await?;
+                let contracts = erc20_addresses
+                    .iter()
+                    .map(|address| IERC20::new(address.address(), &chain_provider))
+                    .collect::<Vec<_>>();
+                let balances = chain_provider
+                    .multicall()
+                    .dynamic()
+                    .extend(contracts.iter().map(|erc20| erc20.balanceOf(request.account)))
+                    .aggregate()
+                    .await?;
                 erc20_addresses.iter().zip(balances).collect::<HashMap<_, _>>()
             } else {
                 HashMap::default()
