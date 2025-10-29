@@ -2714,89 +2714,109 @@ impl RelayApiServer for Relay {
         let chain_details = request.asset_filter.into_iter().map(async |(chain, assets)| {
             let chain_provider = self.provider(chain)?;
 
-            let (native_assets, erc20_assets): (Vec<_>, Vec<_>) = assets
-                .iter()
-                .filter(|asset| !asset.asset_type.is_erc721())
-                .partition(|asset| asset.asset_type.is_native());
-
+            let erc20_assets =
+                assets.iter().filter(|asset| asset.asset_type.is_erc20()).collect::<Vec<_>>();
             let erc20_addresses = erc20_assets
                 .iter()
                 .map(|asset| Asset::Token(asset.address.address()))
                 .collect::<Vec<_>>();
-
             let assets_metadata = if !erc20_addresses.is_empty() {
-                self.inner.asset_info.get_asset_info_list(&chain_provider, erc20_addresses).await?
+                self.inner
+                    .asset_info
+                    .get_asset_info_list(&chain_provider, erc20_addresses.clone())
+                    .await?
             } else {
                 HashMap::default()
             };
 
-            // Batch all balanceOf calls for ERC20 tokens into one/multiple multicalls
-            let erc20_balances = if !erc20_assets.is_empty() {
+            // Retrieve ERC20 balances, map addresses to balances
+            let erc20_balances = if !erc20_addresses.is_empty() {
                 let mut multicall = chain_provider.multicall().dynamic();
-                for asset in &erc20_assets {
+                for asset in erc20_assets {
                     let erc20 = IERC20::new(asset.address.address(), &chain_provider);
                     multicall = multicall.add_dynamic(erc20.balanceOf(request.account));
                 }
-                multicall.aggregate().await?
+                let balances = multicall.aggregate().await?;
+                erc20_addresses.iter().zip(balances).collect::<HashMap<_, _>>()
             } else {
-                vec![]
+                HashMap::default()
             };
 
-            let mut results = Vec::new();
+            let txs =
+                assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
+                    // get price if this is a fee token
+                    let price = self.get_token_price(chain, asset).await;
 
-            // Handle native assets
-            for asset in native_assets {
-                let symbol = NamedChain::try_from(chain)
-                    .ok()
-                    .and_then(|c| c.native_currency_symbol())
-                    .map(ToString::to_string);
+                    if asset.asset_type.is_native() {
+                        let symbol = NamedChain::try_from(chain)
+                            .ok()
+                            .and_then(|c| c.native_currency_symbol())
+                            .map(ToString::to_string);
 
-                results.push(Asset7811 {
-                    address: AddressOrNative::Native,
-                    balance: chain_provider.get_balance(request.account).await?,
-                    asset_type: asset.asset_type,
-                    metadata: Some(AssetMetadataWithPrice {
-                        name: None,
-                        symbol,
-                        decimals: Some(18),
-                        uri: None,
-                        fiat: self.get_token_price(chain, asset).await,
-                    }),
-                });
-            }
+                        return Ok::<_, RelayError>(Asset7811 {
+                            address: AddressOrNative::Native,
+                            balance: chain_provider.get_balance(request.account).await?,
+                            asset_type: asset.asset_type,
+                            metadata: Some(AssetMetadataWithPrice {
+                                name: None,
+                                symbol,
+                                // use a constant 18 for native assets
+                                decimals: Some(18),
+                                uri: None,
+                                fiat: price,
+                            }),
+                        });
+                    }
 
-            // Handle ERC20 assets with batched balances
-            for (idx, asset) in erc20_assets.iter().enumerate() {
-                let (name, symbol, decimals, uri) = assets_metadata
-                    .get(&Asset::Token(asset.address.address()))
-                    .map(|info| {
-                        (
-                            info.metadata.name.clone(),
-                            info.metadata.symbol.clone(),
-                            info.metadata.decimals,
-                            info.metadata.uri.clone(),
-                        )
+                    let (name, symbol, decimals, uri) = assets_metadata
+                        .get(&Asset::Token(asset.address.address()))
+                        .map(|info| {
+                            (
+                                info.metadata.name.clone(),
+                                info.metadata.symbol.clone(),
+                                info.metadata.decimals,
+                                info.metadata.uri.clone(),
+                            )
+                        })
+                        .unwrap_or_default();
+                    let balance = erc20_balances
+                        .get(&Asset::Token(asset.address.address()))
+                        .unwrap_or(&U256::ZERO);
+
+                    Ok::<_, RelayError>(Asset7811 {
+                        address: asset.address,
+                        balance: *balance,
+                        asset_type: asset.asset_type,
+                        metadata: Some(AssetMetadataWithPrice {
+                            name,
+                            symbol,
+                            decimals,
+                            uri,
+                            fiat: self.get_token_price(chain, asset).await,
+                        }),
                     })
-                    .unwrap_or_default();
-
-                results.push(Asset7811 {
-                    address: asset.address,
-                    balance: erc20_balances[idx],
-                    asset_type: asset.asset_type,
-                    metadata: Some(AssetMetadataWithPrice {
-                        name,
-                        symbol,
-                        decimals,
-                        uri,
-                        fiat: self.get_token_price(chain, asset).await,
-                    }),
                 });
-            }
 
-            Ok::<_, RelayError>((chain, results))
+            let assets: Vec<_> = join_all(txs)
+                .await
+                .into_iter()
+                .filter_map(|result| {
+                    result.inspect_err(|e| warn!(%chain, error = %e, "Failed to fetch asset")).ok()
+                })
+                .collect();
+
+            Ok::<_, RelayError>((chain, assets))
         });
 
-        Ok(GetAssetsResponse(try_join_all(chain_details).await?.into_iter().collect()))
+        let response: HashMap<_, _> = join_all(chain_details)
+            .await
+            .into_iter()
+            .filter_map(|result| {
+                result.inspect_err(|e| warn!(error = %e, "Failed to fetch assets for chain")).ok()
+            })
+            .collect();
+
+        Ok(GetAssetsResponse(response))
     }
 
     async fn prepare_calls(
