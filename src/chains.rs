@@ -1,6 +1,6 @@
 //! A collection of providers for different chains.
 
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 use alloy::{
     primitives::{Address, ChainId, map::HashMap},
@@ -32,7 +32,7 @@ use crate::{
         InteropService, InteropServiceHandle, TransactionService, TransactionServiceHandle,
     },
     transport::{
-        RETRY_LAYER, SequencerLayer, create_transport,
+        RETRY_LAYER, SequencerLayer, TimeoutLayer, create_transport,
         delegate::{EthSendRawDelegateLayer, MulticastService},
     },
     types::{AssetDescriptor, AssetUid, Assets, Erc20Slots, FeeEstimationContext, PartialIntent},
@@ -245,6 +245,7 @@ impl Chains {
                     &desc.endpoint,
                     desc.sequencer.as_ref(),
                     desc.eth_send_raw_delegates.clone(),
+                    Duration::from_secs(desc.rpc_timeout_secs),
                 )
                 .await?;
                 let erc20_slots = Erc20Slots::new(provider.clone(), &desc.assets).await?;
@@ -510,11 +511,14 @@ async fn try_build_provider(
     endpoint: &Url,
     sequencer_endpoint: Option<&Url>,
     eth_send_raw_delegates: Vec<Url>,
+    rpc_timeout: Duration,
 ) -> eyre::Result<DynProvider> {
     let (transport, is_local) = create_transport(endpoint).await?;
 
-    let builder =
-        ClientBuilder::default().layer(TraceLayer::new(chain_id)).layer(RETRY_LAYER.clone());
+    let builder = ClientBuilder::default()
+        .layer(TraceLayer::new(chain_id))
+        .layer(TimeoutLayer::new(rpc_timeout, chain_id))
+        .layer(RETRY_LAYER.clone());
 
     let client = if let Some(sequencer_url) = sequencer_endpoint {
         let sequencer =
