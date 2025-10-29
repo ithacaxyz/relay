@@ -2736,12 +2736,17 @@ impl RelayApiServer for Relay {
         let chain_details = request.asset_filter.into_iter().map(async |(chain, assets)| {
             let chain_provider = self.provider(chain)?;
 
-            let erc20_assets =
-                assets.iter().filter(|asset| asset.asset_type.is_erc20()).collect::<Vec<_>>();
-            let erc20_addresses = erc20_assets
+            let non_erc721_assets = assets
+                .into_iter()
+                .filter(|asset| !asset.asset_type.is_erc721())
+                .collect::<Vec<_>>();
+
+            let erc20_addresses = non_erc721_assets
                 .iter()
+                .filter(|asset| asset.asset_type.is_erc20())
                 .map(|asset| Asset::Token(asset.address.address()))
                 .collect::<Vec<_>>();
+
             let assets_metadata = if !erc20_addresses.is_empty() {
                 self.inner
                     .asset_info
@@ -2751,11 +2756,10 @@ impl RelayApiServer for Relay {
                 HashMap::default()
             };
 
-            // Retrieve ERC20 balances, map addresses to balances
             let erc20_balances = if !erc20_addresses.is_empty() {
                 let mut multicall = chain_provider.multicall().dynamic();
-                for asset in erc20_assets {
-                    let erc20 = IERC20::new(asset.address.address(), &chain_provider);
+                for address in &erc20_addresses {
+                    let erc20 = IERC20::new(address.address(), &chain_provider);
                     multicall = multicall.add_dynamic(erc20.balanceOf(request.account));
                 }
                 let balances = multicall.aggregate().await?;
@@ -2764,32 +2768,30 @@ impl RelayApiServer for Relay {
                 HashMap::default()
             };
 
-            let txs =
-                assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
-                    // get price if this is a fee token
-                    let price = self.get_token_price(chain, asset).await;
+            let txs = non_erc721_assets.iter().map(async |asset| {
+                // get price if this is a fee token
+                let price = self.get_token_price(chain, asset).await;
 
-                    if asset.asset_type.is_native() {
-                        let symbol = NamedChain::try_from(chain)
-                            .ok()
-                            .and_then(|c| c.native_currency_symbol())
-                            .map(ToString::to_string);
+                if asset.asset_type.is_native() {
+                    let symbol = NamedChain::try_from(chain)
+                        .ok()
+                        .and_then(|c| c.native_currency_symbol())
+                        .map(ToString::to_string);
 
-                        return Ok::<_, RelayError>(Asset7811 {
-                            address: AddressOrNative::Native,
-                            balance: chain_provider.get_balance(request.account).await?,
-                            asset_type: asset.asset_type,
-                            metadata: Some(AssetMetadataWithPrice {
-                                name: None,
-                                symbol,
-                                // use a constant 18 for native assets
-                                decimals: Some(18),
-                                uri: None,
-                                fiat: price,
-                            }),
-                        });
-                    }
-
+                    Ok::<_, RelayError>(Asset7811 {
+                        address: AddressOrNative::Native,
+                        balance: chain_provider.get_balance(request.account).await?,
+                        asset_type: asset.asset_type,
+                        metadata: Some(AssetMetadataWithPrice {
+                            name: None,
+                            symbol,
+                            // use a constant 18 for native assets
+                            decimals: Some(18),
+                            uri: None,
+                            fiat: price,
+                        }),
+                    })
+                } else {
                     let (name, symbol, decimals, uri) = assets_metadata
                         .get(&Asset::Token(asset.address.address()))
                         .map(|info| {
@@ -2817,7 +2819,8 @@ impl RelayApiServer for Relay {
                             fiat: self.get_token_price(chain, asset).await,
                         }),
                     })
-                });
+                }
+            });
 
             let assets: Vec<_> = join_all(txs)
                 .await
