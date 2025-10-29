@@ -2736,56 +2736,95 @@ impl RelayApiServer for Relay {
         let chain_details = request.asset_filter.into_iter().map(async |(chain, assets)| {
             let chain_provider = self.provider(chain)?;
 
-            let txs =
-                assets.iter().filter(|asset| !asset.asset_type.is_erc721()).map(async |asset| {
-                    // get price if this is a fee token
-                    let price = self.get_token_price(chain, asset).await;
+            let non_erc721_assets = assets
+                .into_iter()
+                .filter(|asset| !asset.asset_type.is_erc721())
+                .collect::<Vec<_>>();
 
-                    if asset.asset_type.is_native() {
-                        let symbol = NamedChain::try_from(chain)
-                            .ok()
-                            .and_then(|c| c.native_currency_symbol())
-                            .map(ToString::to_string);
+            let erc20_addresses = non_erc721_assets
+                .iter()
+                .filter(|asset| asset.asset_type.is_erc20())
+                .map(|asset| Asset::Token(asset.address.address()))
+                .collect::<Vec<_>>();
 
-                        return Ok::<_, RelayError>(Asset7811 {
-                            address: AddressOrNative::Native,
-                            balance: chain_provider.get_balance(request.account).await?,
-                            asset_type: asset.asset_type,
-                            metadata: Some(AssetMetadataWithPrice {
-                                name: None,
-                                symbol,
-                                // use a constant 18 for native assets
-                                decimals: Some(18),
-                                uri: None,
-                                fiat: price,
-                            }),
-                        });
-                    }
+            let assets_metadata = if !erc20_addresses.is_empty() {
+                self.inner
+                    .asset_info
+                    .get_asset_info_list(&chain_provider, erc20_addresses.clone())
+                    .await?
+            } else {
+                HashMap::default()
+            };
 
-                    let erc20 = IERC20::new(asset.address.address(), &chain_provider);
+            let erc20_balances = if !erc20_addresses.is_empty() {
+                let contracts = erc20_addresses
+                    .iter()
+                    .map(|address| IERC20::new(address.address(), &chain_provider))
+                    .collect::<Vec<_>>();
+                let balances = chain_provider
+                    .multicall()
+                    .dynamic()
+                    .extend(contracts.iter().map(|erc20| erc20.balanceOf(request.account)))
+                    .aggregate()
+                    .await?;
+                erc20_addresses.iter().zip(balances).collect::<HashMap<_, _>>()
+            } else {
+                HashMap::default()
+            };
 
-                    let (balance, decimals, name, symbol) = chain_provider
-                        .multicall()
-                        .add(erc20.balanceOf(request.account))
-                        .add(erc20.decimals())
-                        .add(erc20.name())
-                        .add(erc20.symbol())
-                        .aggregate()
-                        .await?;
+            let txs = non_erc721_assets.iter().map(async |asset| {
+                // get price if this is a fee token
+                let price = self.get_token_price(chain, asset).await;
 
-                    Ok(Asset7811 {
-                        address: asset.address,
-                        balance,
+                if asset.asset_type.is_native() {
+                    let symbol = NamedChain::try_from(chain)
+                        .ok()
+                        .and_then(|c| c.native_currency_symbol())
+                        .map(ToString::to_string);
+
+                    Ok::<_, RelayError>(Asset7811 {
+                        address: AddressOrNative::Native,
+                        balance: chain_provider.get_balance(request.account).await?,
                         asset_type: asset.asset_type,
                         metadata: Some(AssetMetadataWithPrice {
-                            name: Some(name),
-                            symbol: Some(symbol),
-                            decimals: Some(decimals),
+                            name: None,
+                            symbol,
+                            // use a constant 18 for native assets
+                            decimals: Some(18),
                             uri: None,
                             fiat: price,
                         }),
                     })
-                });
+                } else {
+                    let (name, symbol, decimals, uri) = assets_metadata
+                        .get(&Asset::Token(asset.address.address()))
+                        .map(|info| {
+                            (
+                                info.metadata.name.clone(),
+                                info.metadata.symbol.clone(),
+                                info.metadata.decimals,
+                                info.metadata.uri.clone(),
+                            )
+                        })
+                        .unwrap_or_default();
+                    let balance = erc20_balances
+                        .get(&Asset::Token(asset.address.address()))
+                        .unwrap_or(&U256::ZERO);
+
+                    Ok::<_, RelayError>(Asset7811 {
+                        address: asset.address,
+                        balance: *balance,
+                        asset_type: asset.asset_type,
+                        metadata: Some(AssetMetadataWithPrice {
+                            name,
+                            symbol,
+                            decimals,
+                            uri,
+                            fiat: self.get_token_price(chain, asset).await,
+                        }),
+                    })
+                }
+            });
 
             let assets: Vec<_> = join_all(txs)
                 .await
