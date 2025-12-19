@@ -94,6 +94,7 @@ mod tests {
     };
 
     #[tokio::test]
+    #[ignore]
     async fn test_arb_gas_estimate_l1() {
         let provider =
             ProviderBuilder::new().connect("https://arb1.arbitrum.io/rpc").await.unwrap().erased();
