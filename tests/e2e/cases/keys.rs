@@ -3,14 +3,14 @@ use crate::e2e::{
     cases::upgrade_account_eagerly, environment::Environment, run_e2e,
 };
 use alloy::{
-    primitives::{U64, U256},
+    primitives::{Address, B256, U64, U256},
     sol_types::SolCall,
 };
 use relay::{
     rpc::RelayApiClient,
     signers::Eip712PayLoadSigner,
     types::{
-        CallPermission,
+        Call, CallPermission,
         IthacaAccount::SpendPeriod,
         KeyType, KeyWith712Signer,
         rpc::{
@@ -433,4 +433,45 @@ async fn get_keys_multichain_three_chains_two_have_session() -> eyre::Result<()>
     assert_eq!(response.get(&U64::from(env.chain_ids[2])).unwrap().len(), 1);
 
     Ok(())
+}
+
+/// Test high-S normalization for P256/WebAuthn keys (precall + normal call).
+#[tokio::test(flavor = "multi_thread")]
+async fn high_s_signature() -> eyre::Result<()> {
+    let webauthn =
+        KeyWith712Signer::random_admin(KeyType::WebAuthnP256)?.unwrap().with_high_s_signature();
+    let p256 = KeyWith712Signer::random_admin(KeyType::P256)?.unwrap().with_high_s_signature();
+
+    run_e2e(|env| {
+        vec![
+            // WebAuthn signs precall, P256 signs main tx
+            TxContext {
+                authorization_keys: vec![&webauthn],
+                expected: ExpectedOutcome::Pass,
+                pre_calls: vec![TxContext {
+                    authorization_keys: vec![&p256],
+                    key: Some(&webauthn),
+                    nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
+                    ..Default::default()
+                }],
+                calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(10))],
+                key: Some(&p256),
+                ..Default::default()
+            },
+            // P256 signs precall, WebAuthn signs main tx
+            TxContext {
+                expected: ExpectedOutcome::Pass,
+                pre_calls: vec![TxContext {
+                    authorization_keys: vec![&p256],
+                    key: Some(&p256),
+                    nonce: Some(U256::from_be_bytes(*B256::random()) << 64),
+                    ..Default::default()
+                }],
+                calls: vec![Call::transfer(env.erc20, Address::random(), U256::from(10))],
+                key: Some(&webauthn),
+                ..Default::default()
+            },
+        ]
+    })
+    .await
 }

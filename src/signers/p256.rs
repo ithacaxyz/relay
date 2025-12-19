@@ -1,6 +1,7 @@
 //! P256 signer type with webauthn capabilities used for gas estimation and testing.
 
 use super::Eip712PayLoadSigner;
+use crate::types::KeyType;
 use alloy::primitives::{B256, Bytes};
 use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use std::sync::Arc;
@@ -43,6 +44,10 @@ impl P256Signer {
 
 #[async_trait::async_trait]
 impl Eip712PayLoadSigner for P256Signer {
+    fn key_type(&self) -> KeyType {
+        KeyType::P256
+    }
+
     async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
         Ok(self.sign_prehash(payload_hash.as_slice())?.to_bytes().to_vec().into())
     }

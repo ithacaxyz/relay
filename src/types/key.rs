@@ -1,6 +1,6 @@
 use super::{
     super::signers::{DynSigner, Eip712PayLoadSigner, P256Key, P256Signer, WebAuthnSigner},
-    U40,
+    U40, WebAuthnP256,
     rpc::{AuthorizeKey, CallKey, Permission, RevokeKey},
 };
 use IDelegation::getKeysReturn;
@@ -364,6 +364,15 @@ impl KeyWith712Signer {
         }
     }
 
+    /// Wraps signer to produce high-S signatures for testing P256 normalization.
+    pub fn with_high_s_signature(self) -> Self {
+        Self {
+            key: self.key,
+            signer: Arc::new(HighSSignerWrapper(self.signer)),
+            permissions: self.permissions,
+        }
+    }
+
     /// Returns [`KeyWith712Signer`] with additional permissions.
     pub fn with_permissions(mut self, permissions: Vec<Permission>) -> Self {
         self.permissions = permissions;
@@ -404,6 +413,10 @@ impl KeyWith712Signer {
 
 #[async_trait::async_trait]
 impl Eip712PayLoadSigner for KeyWith712Signer {
+    fn key_type(&self) -> KeyType {
+        self.signer.key_type()
+    }
+
     async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
         Ok(self.signer.sign_payload_hash(payload_hash).await?)
     }
@@ -425,6 +438,68 @@ pub const ITHACA_ACCOUNT_STORAGE_SLOT: u128 = 1264628507133665080054;
 /// The offset for the `keyStorage` variable in the `DelegationStorage` struct in the delegation
 /// contract.
 pub const ITHACA_KEY_STORAGE_SLOT_OFFSET: u128 = 3;
+
+const P256_N: U256 =
+    alloy::uint!(0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551_U256);
+const P256_HALF_N: U256 =
+    alloy::uint!(0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8_U256);
+
+/// Wrapper that converts signatures to high-S for testing normalization.
+#[derive(Debug)]
+struct HighSSignerWrapper(Arc<dyn Eip712PayLoadSigner>);
+
+#[async_trait::async_trait]
+impl Eip712PayLoadSigner for HighSSignerWrapper {
+    fn key_type(&self) -> KeyType {
+        self.0.key_type()
+    }
+
+    async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
+        let sig = self.0.sign_payload_hash(payload_hash).await?;
+        match self.0.key_type() {
+            KeyType::P256 => {
+                let s = U256::from_be_slice(&sig[32..]);
+                if s < P256_HALF_N {
+                    let mut out = sig[..32].to_vec();
+                    out.extend_from_slice(B256::from(P256_N - s).as_slice());
+                    return Ok(out.into());
+                }
+            }
+            KeyType::WebAuthnP256 => {
+                if let Ok(mut w) = WebAuthnP256::abi_decode(&sig) {
+                    let s: U256 = w.s.into();
+                    if s < P256_HALF_N {
+                        w.s = (P256_N - s).into();
+                        return Ok(w.abi_encode().into());
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(sig)
+    }
+}
+
+/// Normalizes P256 signature S value to lower half of curve.
+///
+/// Handles both raw P256 (64 bytes) and ABI-encoded WebAuthnP256 formats.
+pub fn normalize_p256_s(signature: Bytes) -> Bytes {
+    if signature.len() == 64 {
+        let s = U256::from_be_slice(&signature[32..]);
+        if s > P256_HALF_N {
+            let mut out = signature[..32].to_vec();
+            out.extend_from_slice(B256::from(P256_N - s).as_slice());
+            return out.into();
+        }
+    } else if let Ok(mut w) = WebAuthnP256::abi_decode(&signature) {
+        let s: U256 = w.s.into();
+        if s > P256_HALF_N {
+            w.s = (P256_N - s).into();
+            return WebAuthnP256::abi_encode(&w).into();
+        }
+    }
+    signature
+}
 
 #[cfg(test)]
 mod tests {

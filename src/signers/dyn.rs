@@ -2,6 +2,7 @@
 //!
 //! A signer abstracted over multiple underlying signers.
 use super::Eip712PayLoadSigner;
+use crate::types::KeyType;
 use alloy::{
     network::{FullSigner, TxSigner},
     primitives::{Address, B256, Bytes, Signature},
@@ -80,6 +81,10 @@ impl Deref for DynSigner {
 
 #[async_trait::async_trait]
 impl Eip712PayLoadSigner for DynSigner {
+    fn key_type(&self) -> KeyType {
+        KeyType::Secp256k1
+    }
+
     async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
         Ok(self.sign_hash(&payload_hash).await?.as_bytes().into())
     }

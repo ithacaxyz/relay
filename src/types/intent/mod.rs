@@ -1,4 +1,4 @@
-use super::{Call, IDelegation::authorizeCall, Key, MerkleLeafInfo};
+use super::{Call, IDelegation::authorizeCall, Key, MerkleLeafInfo, key::normalize_p256_s};
 use crate::{
     error::{IntentError, MerkleError, RelayError},
     types::{
@@ -444,11 +444,17 @@ impl IntentKey<Key> {
     pub fn wrap_signature(&self, signature: Bytes, prehash: bool) -> Bytes {
         match self {
             IntentKey::EoaRootKey => signature,
-            IntentKey::StoredKey(key) => {
-                Signature { innerSignature: signature, keyHash: key.key_hash(), prehash }
-                    .abi_encode_packed()
-                    .into()
+            IntentKey::StoredKey(key) => Signature {
+                innerSignature: if key.keyType.is_webauthn() || key.keyType.is_p256() {
+                    normalize_p256_s(signature)
+                } else {
+                    signature
+                },
+                keyHash: key.key_hash(),
+                prehash,
             }
+            .abi_encode_packed()
+            .into(),
         }
     }
 }
@@ -493,7 +499,11 @@ impl IntentKey<CallKey> {
         match self {
             IntentKey::EoaRootKey => signature,
             IntentKey::StoredKey(key) => Signature {
-                innerSignature: signature,
+                innerSignature: if key.key_type.is_webauthn() || key.key_type.is_p256() {
+                    normalize_p256_s(signature)
+                } else {
+                    signature
+                },
                 keyHash: key.key_hash(),
                 prehash: key.prehash,
             }

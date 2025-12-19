@@ -1,5 +1,5 @@
 use super::{Eip712PayLoadSigner, p256::P256Key};
-use crate::types::WebAuthnP256;
+use crate::types::{KeyType, WebAuthnP256};
 use alloy::{
     primitives::{B256, Bytes, U256, bytes},
     signers::k256::sha2::{Digest, Sha256},
@@ -32,6 +32,10 @@ impl P256Key for WebAuthnSigner {
 
 #[async_trait::async_trait]
 impl Eip712PayLoadSigner for WebAuthnSigner {
+    fn key_type(&self) -> KeyType {
+        KeyType::WebAuthnP256
+    }
+
     async fn sign_payload_hash(&self, payload_hash: B256) -> eyre::Result<Bytes> {
         // ID || UserPresent Flag || SignatureCounter
         let authenticator_data = bytes!(
