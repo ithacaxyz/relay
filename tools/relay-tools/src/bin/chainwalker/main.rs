@@ -86,7 +86,7 @@ pub struct Args {
     skip_settlement_wait: bool,
 
     /// Relay URL (defaults to staging)
-    #[arg(long = "relay-url", default_value = "https://stg-rpc.ithaca.xyz")]
+    #[arg(long = "relay-url", default_value = "https://rpc.ithaca.xyz")]
     relay_url: Url,
 
     /// Sets whether or not the formatter emits ANSI terminal escape codes for colors and other

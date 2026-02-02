@@ -32,7 +32,7 @@ chainwalker --help
 - `--force` - Continue even if account has been used before
 - `--transfer-percentage N` - Percentage of balance to transfer on each hop (default: 90)
 - `--skip-settlement-wait` - Skip waiting for settlement completion
-- `--relay-url URL` - Relay URL (default: https://stg-rpc.ithaca.xyz)
+- `--relay-url URL` - Relay URL (default: https://rpc.ithaca.xyz)
 
 ## How it Works
 

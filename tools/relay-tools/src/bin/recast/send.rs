@@ -52,7 +52,7 @@ pub struct Args {
     private_key: String,
 
     /// Relay URL
-    #[arg(long, default_value = "https://stg-rpc.ithaca.xyz")]
+    #[arg(long, default_value = "https://rpc.ithaca.xyz")]
     relay_url: Url,
 
     /// Enable debug output

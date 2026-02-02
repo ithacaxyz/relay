@@ -27,7 +27,7 @@ Options:
       --chain <CHAIN_ID>       Chain ID
       --fee-uid <UID>          Fee token UID (defaults to the transfer token)
       --private-key <KEY>      Private key of the sender [env: PRIVATE_KEY]
-      --relay-url <RELAY_URL>  Relay URL [default: https://stg-rpc.ithaca.xyz]
+      --relay-url <RELAY_URL>  Relay URL [default: https://rpc.ithaca.xyz]
       --debug                  Enable debug output
   -h, --help                   Print help
 ```
