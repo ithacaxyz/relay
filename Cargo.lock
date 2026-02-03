@@ -5631,9 +5631,9 @@ dependencies = [
 
 [[package]]
 name = "resend-rs"
-version = "0.16.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "224037464fdf78d50300b9a28e2fed30ce95aff3e9f7dd28a3561236f75c2d20"
+checksum = "bf066e33447c8aaa5e74560f813fbc5199f9cbe60fdc2dc132a3775bc2ed3d56"
 dependencies = [
  "ecow",
  "getrandom 0.3.3",
