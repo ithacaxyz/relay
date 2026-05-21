@@ -1631,10 +1631,14 @@ impl Relay {
                     return true;
                 };
 
+                // `mapped` is the source-chain descriptor for this asset, so
+                // `mapped.address` is the source-chain address. The destination
+                // decimals must be looked up on the destination chain using the
+                // destination address (the key we are retaining on).
                 let Some(dst_decimals) = self
                     .inner
                     .chains
-                    .asset(destination_chain_id, mapped.address)
+                    .asset(destination_chain_id, asset.address())
                     .map(|(_, desc)| desc.decimals)
                 else {
                     return true;
