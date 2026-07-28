@@ -25,6 +25,7 @@ transactions:
     base: https://mainnet.base.org/
 pricefeed:
   coingecko:
+    fetch_interval: 120
     remapping:
       ethereum: "ethereum"
       usd-coin: "usd-coin"

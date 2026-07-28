@@ -17,6 +17,8 @@ funder: "0x"
 
 pricefeed:
   coingecko:
+    # Time in seconds between batched CoinGecko price requests.
+    fetch_interval: 60
     # Remaps asset UIDs to CoinGecko coin IDs.
     #
     # If not specified, the UID is used as the coin ID.

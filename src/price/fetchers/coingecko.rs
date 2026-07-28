@@ -8,13 +8,10 @@ use itertools::Itertools;
 use metrics::counter;
 use std::{
     collections::HashMap,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, time::interval};
 use tracing::{error, trace, warn};
-
-/// The time interval between fetching prices.
-static PRICE_FETCH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// CoinGecko price fetcher;
 #[derive(Debug)]
@@ -47,10 +44,15 @@ impl CoinGecko {
     }
 
     /// Creates an instance of [`CoinGecko`] that sends a price feed to [`PriceOracle`] for all
-    /// tokens from a spawned task every 10 seconds.
+    /// tokens from a spawned task at the configured interval.
     pub fn launch(update_tx: mpsc::UnboundedSender<PriceOracleMessage>, config: &RelayConfig) {
         if Self::api_key().is_empty() {
             warn!("GECKO_API environment variable not set, CoinGecko price fetcher will not run");
+            return;
+        }
+        let fetch_interval = config.pricefeed.coingecko.fetch_interval;
+        if fetch_interval.is_zero() {
+            error!("CoinGecko fetch interval must be greater than zero");
             return;
         }
         let mut assets: HashMap<String, Vec<AssetUid>> = HashMap::new();
@@ -69,7 +71,7 @@ impl CoinGecko {
 
         // Launch task to fetch prices on a fixed interval
         tokio::spawn(async move {
-            let mut clock = interval(PRICE_FETCH_INTERVAL);
+            let mut clock = interval(fetch_interval);
 
             loop {
                 clock.tick().await;

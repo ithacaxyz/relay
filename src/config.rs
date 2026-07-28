@@ -776,11 +776,27 @@ pub struct PriceFeedConfig {
 }
 
 /// Configuration for CoinGecko.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoinGeckoConfig {
+    /// Interval between CoinGecko price requests.
+    #[serde(default = "CoinGeckoConfig::default_fetch_interval", with = "crate::serde::duration")]
+    pub fetch_interval: Duration,
     /// A map of asset UIDs to CoinGecko coin IDs.
     #[serde(default)]
     pub remapping: HashMap<AssetUid, String>,
+}
+
+impl CoinGeckoConfig {
+    /// Returns the default interval between CoinGecko price requests.
+    const fn default_fetch_interval() -> Duration {
+        Duration::from_secs(60)
+    }
+}
+
+impl Default for CoinGeckoConfig {
+    fn default() -> Self {
+        Self { fetch_interval: Self::default_fetch_interval(), remapping: Default::default() }
+    }
 }
 
 /// Configuration for the settler service.
@@ -950,6 +966,10 @@ mod tests {
     fn test_config_v21_yaml() {
         let s = include_str!("../tests/assets/config/v21.yaml");
         let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+        assert_eq!(
+            config.pricefeed.coingecko.fetch_interval,
+            CoinGeckoConfig::default_fetch_interval()
+        );
         let yaml = serde_yaml::to_string(&config).unwrap();
         let from_yaml = serde_yaml::from_str::<RelayConfig>(&yaml).unwrap();
         assert_eq!(from_yaml.chains, config.chains);
@@ -962,6 +982,7 @@ mod tests {
     fn test_config_v22() {
         let s = include_str!("../tests/assets/config/v22.yaml");
         let config = serde_yaml::from_str::<RelayConfig>(s).unwrap();
+        assert_eq!(config.pricefeed.coingecko.fetch_interval, Duration::from_secs(120));
 
         // Verify that chains have settler addresses based on whether they have interop tokens
         for (chain, chain_config) in &config.chains {
